@@ -487,6 +487,15 @@ function mergeAndDedupeTracks(lists: UnifiedTrack[][], queryTerms: string[] = []
         if (!existing.previewUrl && track.previewUrl) {
           existing.previewUrl = track.previewUrl;
           existing.rawPreviewUrl = track.rawPreviewUrl;
+        } else if (
+          existing.rawPreviewUrl &&
+          track.rawPreviewUrl &&
+          existing.rawPreviewUrl.includes('dzcdn.net') &&
+          track.rawPreviewUrl.includes('itunes.apple.com')
+        ) {
+          // Prefer permanent Apple CDN preview over short-lived Deezer signed preview tokens!
+          existing.previewUrl = track.previewUrl;
+          existing.rawPreviewUrl = track.rawPreviewUrl;
         }
         if (track.externalUrl?.includes('music.apple.com')) {
           existing.externalLinks.apple = track.externalUrl;
@@ -608,7 +617,8 @@ async function handleSearch(url: URL, env?: MusicApiEnv): Promise<Response> {
     },
     200,
     {
-      'Cache-Control': tracks.length > 0 ? 'public, max-age=3600' : 'no-store',
+      // Keep edge cache short (5 min) so signed Deezer preview URLs never go stale!
+      'Cache-Control': tracks.length > 0 ? 'public, max-age=300' : 'no-store',
     }
   );
 }
@@ -720,7 +730,7 @@ async function handleDiscover(url: URL, env?: MusicApiEnv): Promise<Response> {
     return jsonResponse(
       { category, total: tracks.length, results: tracks },
       200,
-      { 'Cache-Control': tracks.length > 0 ? 'public, max-age=3600' : 'no-store' }
+      { 'Cache-Control': tracks.length > 0 ? 'public, max-age=300' : 'no-store' }
     );
   }
 
@@ -756,7 +766,7 @@ async function handleDiscover(url: URL, env?: MusicApiEnv): Promise<Response> {
   return jsonResponse(
     { category, total: tracks.length, results: tracks },
     200,
-    { 'Cache-Control': tracks.length > 0 ? 'public, max-age=3600' : 'no-store' }
+    { 'Cache-Control': tracks.length > 0 ? 'public, max-age=300' : 'no-store' }
   );
 }
 

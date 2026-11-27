@@ -1,14 +1,8 @@
 import type { Song } from '../types';
 
-function isMobileBrowser(): boolean {
-  if (typeof navigator === 'undefined') return false;
-  return /iPhone|iPad|iPod|Android|MicroMessenger|Mobile|HarmonyOS/i.test(navigator.userAgent);
-}
-
 /**
- * Extracts raw upstream URL from `/api/proxy?url=...` and orders playback candidates
- * for fastest, highest-reliability mobile & desktop audio streaming:
- * - Apple CDN (`itunes.apple.com`): direct first (fast Asia/China CDN + native iOS HTTP 206), proxy fallback
+ * Extracts raw upstream URL from `/api/proxy?url=...` and orders playback candidates:
+ * - Apple CDN (`itunes.apple.com`): direct first (fast global/Asia CDN + native HTTP 206), proxy fallback
  * - Deezer (`dzcdn.net`): proxy first (avoids regional blocks), direct fallback
  * - Local `blob:` / `data:` URLs: direct only
  */
@@ -40,12 +34,19 @@ function buildAudioCandidates(previewUrl: string): string[] {
   return isAppleCdn ? [rawUrl, proxyUrl] : [proxyUrl, rawUrl];
 }
 
+export interface AudioPlayResult {
+  ok: boolean;
+  mode: 'track' | 'synth' | 'failed';
+  message?: string;
+}
+
 /**
  * Mobile-First Unified Audio Engine:
- * - Plays real preview tracks directly via native HTMLAudioElement (NO `createMediaElementSource`
- *   hijacking during normal playback — completely eliminates iOS Safari / WeChat WebView silent-audio bug!).
- * - Keeps Web Audio API purely for curated ambient synth tracks (with synchronous iOS gesture unlock)
- *   and desktop video-recording audio capture.
+ * - Plays real song previews natively via a persistent DOM `<audio playsinline>` element
+ *   (NO `createMediaElementSource` hijacking, NO `currentTime = 0` on `HAVE_NOTHING` —
+ *   completely eliminating iOS Safari / WeChat `InvalidStateError` & silent-audio bugs!).
+ * - NEVER substitutes fake synth chords when a real song has a `previewUrl`!
+ *   Synth chords are ONLY used for curated built-in songs that have no `previewUrl`.
  */
 class SparkAudioEngine {
   private ctx: AudioContext | null = null;
@@ -53,7 +54,6 @@ class SparkAudioEngine {
   private masterGain: GainNode | null = null;
   private streamDest: MediaStreamAudioDestinationNode | null = null;
 
-  // Native hardware audio element (NEVER attached to createMediaElementSource so iOS/WeChat ALWAYS plays sound!)
   private nativeAudio: HTMLAudioElement | null = null;
   private playSeq = 0;
 
@@ -91,7 +91,6 @@ class SparkAudioEngine {
       void this.ctx.resume();
     }
 
-    // Synchronous silent-buffer unlock for iOS Safari / WeChat WebView Web Audio
     try {
       const buf = this.ctx.createBuffer(1, 1, 22050);
       const src = this.ctx.createBufferSource();
@@ -112,11 +111,15 @@ class SparkAudioEngine {
       el.preload = 'auto';
       el.setAttribute('playsinline', '');
       el.setAttribute('webkit-playsinline', '');
+      el.style.display = 'none';
       el.volume = 1.0;
       el.muted = false;
       el.addEventListener('ended', () => {
         this.stop();
       });
+      if (typeof document !== 'undefined' && document.body) {
+        document.body.appendChild(el);
+      }
       this.nativeAudio = el;
     }
     return this.nativeAudio;
@@ -196,10 +199,6 @@ class SparkAudioEngine {
     return `${m}:${r}`;
   }
 
-  /**
-   * Returns lively frequency bars (0..1): real AnalyserNode energy during synth playback,
-   * and rhythmic musical envelope synced to playback time during native track playback.
-   */
   getFrequencyBars(barCount: number, t: number, dynamic: boolean): number[] {
     const result: number[] = new Array(barCount);
 
@@ -296,72 +295,92 @@ class SparkAudioEngine {
   }
 
   /**
-   * Starts audio playback immediately within the user's tap gesture (crucial for iOS Safari / WeChat!).
+   * Starts playback immediately within user gesture.
+   * For songs with `previewUrl`: plays the real studio preview (NEVER silently substitutes unrelated synth!).
+   * For built-in curated songs without `previewUrl`: plays the warm Lo-Fi chord synth.
    */
-  async play(song: Song): Promise<void> {
+  async play(song: Song): Promise<AudioPlayResult> {
     this.stop(false);
     const seq = ++this.playSeq;
     this.currentSongId = song.id;
     this.startedAt = performance.now();
-    this.playing = true;
-
-    // Unlock Web Audio synchronously inside user gesture in case we fall back to synth
-    if (!song.previewUrl || !isMobileBrowser()) {
-      this.ensureContext();
-    }
 
     if (song.previewUrl) {
       const candidates = buildAudioCandidates(song.previewUrl);
       const audio = this.ensureNativeAudio();
 
       for (let i = 0; i < candidates.length; i++) {
-        if (seq !== this.playSeq) return;
+        if (seq !== this.playSeq) return { ok: false, mode: 'failed' };
         const candidateUrl = candidates[i];
         try {
-          // NEVER set crossOrigin here — native hardware audio plays cleanly across all CDNs on iOS/Android/WeChat!
+          audio.onerror = null;
           audio.removeAttribute('crossorigin');
-          audio.src = candidateUrl;
-          audio.currentTime = 0;
+          // IMPORTANT: Do NOT assign `audio.currentTime = 0` right after changing `src`!
+          // On iOS Safari & WeChat WebKit, `readyState` is 0 (HAVE_NOTHING) and setting
+          // `currentTime` immediately throws `InvalidStateError` before `play()` even runs!
+          if (audio.src !== candidateUrl) {
+            audio.src = candidateUrl;
+          } else if (audio.readyState >= 1) {
+            try {
+              audio.currentTime = 0;
+            } catch {
+              // Ignore
+            }
+          }
 
-          // Call play() immediately (no blocking pre-load await) to stay inside iOS user-gesture window
+          // Invoke play() synchronously inside the tap gesture
           const playPromise = audio.play();
           await Promise.race([
             playPromise,
             new Promise<never>((_, reject) =>
-              window.setTimeout(() => reject(new Error('Audio play timeout')), 7500)
+              window.setTimeout(() => reject(new Error('Audio timeout')), 8000)
             ),
           ]);
 
           if (seq !== this.playSeq) {
             audio.pause();
-            return;
+            return { ok: false, mode: 'failed' };
           }
 
-          // Attach runtime error fallback in case stream fails mid-buffer
+          this.playing = true;
+          this.mode = 'track';
+
+          // Runtime fallback if stream drops after initial play() resolves
           audio.onerror = () => {
             if (seq !== this.playSeq || !this.playing) return;
             const nextUrl = candidates[i + 1];
             if (nextUrl) {
               audio.onerror = null;
               audio.src = nextUrl;
-              void audio.play().catch(() => this.startSynth(song, seq));
+              void audio.play().catch(() => this.stop());
             } else {
-              this.startSynth(song, seq);
+              this.stop();
             }
           };
 
-          this.mode = 'track';
           this.emit();
-          return;
+          return { ok: true, mode: 'track' };
         } catch {
           // Try next candidate URL
         }
       }
+
+      // Real track failed both direct and proxy URLs — stop honestly instead of playing unrelated synth!
+      this.playing = false;
+      this.currentSongId = null;
+      this.emit();
+      return {
+        ok: false,
+        mode: 'failed',
+        message: '原曲试听音频加载超时或已过期，请再点一次重试，或点击下方去外部平台听完整版',
+      };
     }
 
-    // Fallback to lush warm electric piano synth (never dead silence!)
+    // Curated built-in songs (no previewUrl): play warm Lo-Fi electric piano chord synth
+    this.playing = true;
     this.ensureContext();
     this.startSynth(song, seq);
+    return { ok: true, mode: 'synth' };
   }
 
   stop(notify = true): void {
@@ -370,10 +389,12 @@ class SparkAudioEngine {
     if (this.nativeAudio) {
       this.nativeAudio.onerror = null;
       this.nativeAudio.pause();
-      try {
-        this.nativeAudio.currentTime = 0;
-      } catch {
-        // Ignore
+      if (this.nativeAudio.readyState >= 1) {
+        try {
+          this.nativeAudio.currentTime = 0;
+        } catch {
+          // Ignore
+        }
       }
     }
     if (this.synthInterval !== null) {
@@ -383,12 +404,12 @@ class SparkAudioEngine {
     if (notify) this.emit();
   }
 
-  async toggle(song: Song): Promise<void> {
+  async toggle(song: Song): Promise<AudioPlayResult> {
     if (this.playing && this.currentSongId === song.id) {
       this.stop();
-    } else {
-      await this.play(song);
+      return { ok: true, mode: this.mode };
     }
+    return this.play(song);
   }
 }
 

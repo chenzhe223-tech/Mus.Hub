@@ -264,6 +264,13 @@ function mergeSongs(lists: Song[][], queryTerms: string[] = []): Song[] {
       } else {
         if (!existing.previewUrl && s.previewUrl) {
           existing.previewUrl = s.previewUrl;
+        } else if (
+          existing.previewUrl &&
+          s.previewUrl &&
+          existing.previewUrl.includes('dzcdn.net') &&
+          s.previewUrl.includes('itunes.apple.com')
+        ) {
+          existing.previewUrl = s.previewUrl;
         }
         if (!existing.neteaseId && s.neteaseId) {
           existing.neteaseId = s.neteaseId;

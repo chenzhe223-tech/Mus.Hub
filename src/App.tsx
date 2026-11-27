@@ -474,7 +474,11 @@ export default function App() {
             onUpdateSongMeta={handleUpdateSongMeta}
             onUpdateConfig={handleUpdateConfig}
             onPaletteExtracted={setExtractedPalette}
-            onToggleAudio={() => void audioEngine.toggle(selectedSong)}
+            onToggleAudio={() => {
+              void audioEngine.toggle(selectedSong).then((res) => {
+                if (!res.ok && res.message) showToast(res.message);
+              });
+            }}
             onOpenShare={(pngUrl, videoUrl) =>
               setShareModal({ open: true, previewImgUrl: pngUrl, videoBlobUrl: videoUrl || null })
             }
@@ -492,7 +496,11 @@ export default function App() {
             playingSongId={playingSongId}
             isPlaying={isPlaying}
             userProfile={profile}
-            onTogglePlayPost={(post) => void audioEngine.toggle(post.song)}
+            onTogglePlayPost={(post) => {
+              void audioEngine.toggle(post.song).then((res) => {
+                if (!res.ok && res.message) showToast(res.message);
+              });
+            }}
             onToggleLike={handleToggleLike}
             onToggleSave={handleToggleSave}
             onAddComment={handleAddComment}
@@ -634,7 +642,11 @@ export default function App() {
           authorName={landingData.authorName}
           caption={landingData.caption}
           isPlaying={isPlaying && playingSongId === landingData.song.id}
-          onToggleAudio={() => void audioEngine.toggle(landingData.song)}
+          onToggleAudio={() => {
+            void audioEngine.toggle(landingData.song).then((res) => {
+              if (!res.ok && res.message) showToast(res.message);
+            });
+          }}
           onRemixInStudio={() => {
             setSelectedSong(landingData.song);
             setConfig(landingData.config);
