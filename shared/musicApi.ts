@@ -2,6 +2,9 @@ import {
   buildExternalMusicLinks,
   canonicalTrackKey,
   expandMusicQuery,
+  hasCjk,
+  isStrictTrackMatch,
+  localizeTrackDisplay,
   toTraditionalChinese,
   type ExternalMusicLinks,
 } from './musicAliases';
@@ -200,13 +203,16 @@ async function searchItunes(
   term: string,
   country: 'CN' | 'TW' | 'HK' | 'SG' | 'US',
   limit: number,
-  offset = 0
+  offset = 0,
+  attribute?: 'songTerm'
 ): Promise<UnifiedTrack[]> {
   if (!term.trim()) return [];
-  const lang = country === 'US' ? 'en_us' : country === 'CN' ? 'zh_cn' : 'zh_tw';
+  // Always request zh_cn for Greater China & SG storefronts so Mandopop/Cantopop titles return in Chinese!
+  const lang = country === 'US' ? 'en_us' : 'zh_cn';
+  const attrParam = attribute ? `&attribute=${attribute}` : '';
   const url = `https://itunes.apple.com/search?term=${encodeURIComponent(
     term
-  )}&media=music&entity=song&limit=${limit}&offset=${offset}&country=${country}&lang=${lang}`;
+  )}&media=music&entity=song${attrParam}&limit=${limit}&offset=${offset}&country=${country}&lang=${lang}`;
 
   interface ItunesResponse {
     results?: Array<{
@@ -450,6 +456,11 @@ function scoreTrackRelevance(track: UnifiedTrack, queryTerms: string[]): number 
   let score = track.rawPreviewUrl ? 40 : 0;
   if (!queryTerms.length) return score;
 
+  const queryHasCjk = queryTerms.some((q) => hasCjk(q));
+  if (queryHasCjk && hasCjk(track.title)) {
+    score += 25;
+  }
+
   const titleNorm = toTraditionalChinese(track.title).toLowerCase();
   const artistNorm = toTraditionalChinese(track.artist).toLowerCase();
   const combined = `${titleNorm} ${artistNorm}`;
@@ -479,14 +490,43 @@ function mergeAndDedupeTracks(lists: UnifiedTrack[][], queryTerms: string[] = []
   const orderedKeys: string[] = [];
 
   for (const list of lists) {
-    for (const track of list) {
-      if (!track.rawCover) continue;
+    for (const rawTrack of list) {
+      if (!rawTrack.rawCover) continue;
+      // Localize Chinese artists' English/Traditional titles & albums to clean Simplified Chinese!
+      const loc = localizeTrackDisplay({
+        title: rawTrack.title,
+        artist: rawTrack.artist,
+        album: rawTrack.album,
+      });
+      const track: UnifiedTrack = {
+        ...rawTrack,
+        title: loc.title,
+        artist: loc.artist,
+        album: loc.album,
+        externalLinks: buildExternalMusicLinks(loc.title, loc.artist, {
+          neteaseId: rawTrack.neteaseId,
+          qqMid: rawTrack.qqMid,
+          appleUrl: rawTrack.externalLinks?.apple || rawTrack.externalUrl,
+          spotifyUrl: rawTrack.externalLinks?.spotify,
+        }),
+      };
+
       const key = canonicalTrackKey(track.title, track.artist);
       const existing = byKey.get(key);
       if (!existing) {
         byKey.set(key, track);
         orderedKeys.push(key);
       } else {
+        // Prefer Chinese title/album/artist if the existing one was still English (e.g. unmapped English Deezer title)
+        if (!hasCjk(existing.title) && hasCjk(track.title)) {
+          existing.title = track.title;
+        }
+        if (!hasCjk(existing.artist) && hasCjk(track.artist)) {
+          existing.artist = track.artist;
+        }
+        if (!hasCjk(existing.album) && hasCjk(track.album)) {
+          existing.album = track.album;
+        }
         if (!existing.neteaseId && track.neteaseId) {
           existing.neteaseId = track.neteaseId;
           existing.externalLinks.netease = track.externalLinks.netease;
@@ -569,28 +609,30 @@ export async function searchUnifiedTracks(
     }
   }
 
-  // 2. Deezer (50 req/5s generous limit, real 30s MP3 previews!)
-  if (expanded.englishAlias) {
-    tasks.push(searchDeezer(expanded.englishAlias, 20, offset));
-  }
-  if (expanded.songHintTrad && expanded.songHintTrad !== expanded.englishAlias) {
-    tasks.push(searchDeezer(expanded.songHintTrad, 14, offset));
-  }
-  tasks.push(searchDeezer(expanded.traditional, 16, offset));
-
-  // 3. Multi-Region Apple iTunes (TW + HK + SG + CN + US)
+  // 2. For Chinese queries: prioritize Chinese-native Apple TW/HK/CN/SG first, then Deezer/NetEase/QQ!
   if (expanded.isCjk) {
     if (expanded.songHintTrad) {
       tasks.push(searchItunes(expanded.songHintTrad, 'TW', 16, offset));
-      tasks.push(searchItunes(expanded.songHintTrad, 'SG', 12, offset));
+      tasks.push(searchItunes(expanded.songHintTrad, 'HK', 12, offset));
     }
     tasks.push(searchItunes(expanded.traditional, 'TW', 18, offset));
     tasks.push(searchItunes(expanded.traditional, 'HK', 14, offset));
     tasks.push(searchItunes(expanded.primary, 'CN', 14, offset));
+    if (expanded.songHintTrad) {
+      tasks.push(searchDeezer(expanded.songHintTrad, 14, offset));
+    }
+    tasks.push(searchDeezer(expanded.traditional, 16, offset));
+    if (expanded.englishAlias) {
+      tasks.push(searchDeezer(expanded.englishAlias, 16, offset));
+    }
     tasks.push(searchNetease(expanded.primary, 12, offset));
     tasks.push(searchQQMusic(expanded.primary, 10, Math.floor(offset / 10) + 1));
   } else {
     tasks.push(searchItunes(expanded.englishAlias || expanded.primary, 'US', 24, offset));
+    if (expanded.englishAlias) {
+      tasks.push(searchDeezer(expanded.englishAlias, 20, offset));
+    }
+    tasks.push(searchDeezer(expanded.primary, 16, offset));
     tasks.push(searchItunes(expanded.primary, 'TW', 10, offset));
   }
 
@@ -910,17 +952,25 @@ async function resolveFreshPreviewUrl(
     }
   }
 
-  // 2. Fallback: live search by title + artist (prefers Apple permanent preview, then fresh Deezer)
+  // 2. Fallback: STRICT title + artist verified live search (NEVER plays a different song from the same album!)
   if (!resolved && title) {
+    const target = { title, artist };
     const expanded = expandMusicQuery(`${artist} ${title}`.trim());
-    const [itTw, dzFresh] = await Promise.all([
-      searchItunes(expanded.songHintTrad || expanded.traditional, expanded.isCjk ? 'TW' : 'US', 5),
-      searchDeezer(expanded.englishAlias || expanded.traditional, 5),
+    const titleExpanded = expandMusicQuery(title);
+
+    // Use `attribute=songTerm` on iTunes so searching "逆光" matches TRACK title "逆光", NOT other tracks in album《逆光》!
+    const [itTw, itHk, itCn, dzFresh] = await Promise.all([
+      searchItunes(titleExpanded.traditional, expanded.isCjk ? 'TW' : 'US', 15, 0, 'songTerm'),
+      expanded.isCjk ? searchItunes(titleExpanded.traditional, 'HK', 15, 0, 'songTerm') : Promise.resolve([]),
+      expanded.isCjk ? searchItunes(titleExpanded.primary, 'CN', 15, 0, 'songTerm') : Promise.resolve([]),
+      searchDeezer(expanded.englishAlias || expanded.traditional, 15),
     ]);
-    resolved =
-      itTw.find((t) => t.rawPreviewUrl)?.rawPreviewUrl ||
-      dzFresh.find((t) => t.rawPreviewUrl)?.rawPreviewUrl ||
-      null;
+
+    const allCandidates = [...itTw, ...itHk, ...itCn, ...dzFresh];
+    const strictHit = allCandidates.find(
+      (t) => Boolean(t.rawPreviewUrl) && isStrictTrackMatch({ title: t.title, artist: t.artist }, target)
+    );
+    resolved = strictHit?.rawPreviewUrl || null;
   }
 
   if (resolved) {

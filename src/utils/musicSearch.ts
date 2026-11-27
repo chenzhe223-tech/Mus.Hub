@@ -4,6 +4,8 @@ import {
   buildExternalMusicLinks,
   canonicalTrackKey,
   expandMusicQuery,
+  hasCjk,
+  localizeTrackDisplay,
   toTraditionalChinese,
   type ExternalMusicLinks,
 } from '../../shared/musicAliases';
@@ -116,21 +118,22 @@ export function ensureExternalLinks(song: Song): ExternalMusicLinks {
 }
 
 function mapApiTrackToSong(r: ApiTrackItem): Song {
+  const loc = localizeTrackDisplay({ title: r.title, artist: r.artist, album: r.album });
   return {
     id: r.id,
-    title: r.title,
-    artist: r.artist,
-    album: r.album,
+    title: loc.title,
+    artist: loc.artist,
+    album: loc.album,
     duration: r.duration,
     cover: r.cover,
-    lyric: `把这首《${r.title}》印成一张唱片海报，送给此刻正在听歌的你。`,
+    lyric: `把这首《${loc.title}》印成一张唱片海报，送给此刻正在听歌的你。`,
     palette: null,
     previewUrl: r.previewUrl,
     chordFreqs: [220, 277.18, 329.63, 440],
     externalUrl: r.externalUrl,
     externalLinks:
       r.externalLinks ||
-      buildExternalMusicLinks(r.title, r.artist, {
+      buildExternalMusicLinks(loc.title, loc.artist, {
         neteaseId: r.neteaseId,
         qqMid: r.qqMid,
         appleUrl: r.externalUrl,
@@ -159,7 +162,8 @@ function fetchItunesJsonp(
   return new Promise((resolve) => {
     const cbName = `__sonicItunesCb_${Date.now()}_${++jsonpSeq}`;
     const win = window as unknown as Record<string, unknown>;
-    const lang = country === 'US' ? 'en_us' : country === 'CN' ? 'zh_cn' : 'zh_tw';
+    // Request zh_cn for TW/HK/SG/CN so Apple returns Chinese track & album titles instead of English!
+    const lang = country === 'US' ? 'en_us' : 'zh_cn';
     const script = document.createElement('script');
     let settled = false;
 
@@ -225,6 +229,11 @@ function scoreSongRelevance(song: Song, queryTerms: string[]): number {
   let score = song.previewUrl ? 40 : 0;
   if (!queryTerms.length) return score;
 
+  const queryHasCjk = queryTerms.some((q) => hasCjk(q));
+  if (queryHasCjk && hasCjk(song.title)) {
+    score += 25;
+  }
+
   const titleNorm = toTraditionalChinese(song.title).toLowerCase();
   const artistNorm = toTraditionalChinese(song.artist).toLowerCase();
   const combined = `${titleNorm} ${artistNorm}`;
@@ -254,20 +263,44 @@ function mergeSongs(lists: Song[][], queryTerms: string[] = []): Song[] {
   const order: string[] = [];
 
   for (const list of lists) {
-    for (const s of list) {
-      if (!s.cover) continue;
+    for (const rawSong of list) {
+      if (!rawSong.cover) continue;
+      // Localize Chinese artists' titles/albums to clean Simplified Chinese (e.g. "Sunny Day - Jay Chou" -> "晴天 - 周杰伦")
+      const loc = localizeTrackDisplay({
+        title: rawSong.title,
+        artist: rawSong.artist,
+        album: rawSong.album,
+      });
+      const s: Song = {
+        ...rawSong,
+        title: loc.title,
+        artist: loc.artist,
+        album: loc.album,
+        lyric: rawSong.lyric.startsWith('把这首《')
+          ? `把这首《${loc.title}》印成一张唱片海报，送给此刻正在听歌的你。`
+          : rawSong.lyric,
+      };
       const key = canonicalTrackKey(s.title, s.artist);
       const existing = byKey.get(key);
       if (!existing) {
         byKey.set(key, { ...s, externalLinks: ensureExternalLinks(s) });
         order.push(key);
       } else {
+        if (!hasCjk(existing.title) && hasCjk(s.title)) {
+          existing.title = s.title;
+        }
+        if (!hasCjk(existing.artist) && hasCjk(s.artist)) {
+          existing.artist = s.artist;
+        }
+        if (!hasCjk(existing.album) && hasCjk(s.album)) {
+          existing.album = s.album;
+        }
         if (!existing.previewUrl && s.previewUrl) {
           existing.previewUrl = s.previewUrl;
         } else if (
           existing.previewUrl &&
           s.previewUrl &&
-          existing.previewUrl.includes('dzcdn.net') &&
+          (existing.previewUrl.includes('dzcdn.net') || existing.previewUrl.includes('deezerId=')) &&
           s.previewUrl.includes('itunes.apple.com')
         ) {
           existing.previewUrl = s.previewUrl;
