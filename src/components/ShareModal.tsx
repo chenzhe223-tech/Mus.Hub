@@ -110,12 +110,18 @@ export const ShareModal: React.FC<ShareModalProps> = ({
           </div>
         ) : (
           previewImgUrl && (
-            <div className="flex justify-center hi-fi-inset rounded-xl p-3">
-              <img
-                src={previewImgUrl}
-                alt="海报预览"
-                className="max-h-60 rounded-lg shadow-xl max-w-full h-auto"
-              />
+            <div className="space-y-2">
+              <div className="flex justify-center hi-fi-inset rounded-xl p-3">
+                <img
+                  src={previewImgUrl}
+                  alt="长按保存高清海报"
+                  style={{ WebkitTouchCallout: 'default', userSelect: 'auto' }}
+                  className="max-h-72 rounded-lg shadow-xl max-w-full h-auto"
+                />
+              </div>
+              <div className="text-center text-[11px] font-medium text-[var(--accent)]">
+                手机端 / 微信用户：直接「长按上方海报图片」即可保存到相册
+              </div>
             </div>
           )
         )}
@@ -179,7 +185,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
             className="py-2.5 rounded-lg bg-[var(--btn-primary-bg)] text-[var(--btn-primary-ink)] hover:bg-[var(--btn-primary-hover)] text-xs font-semibold transition flex items-center justify-center gap-1.5"
           >
             <Download className="w-3.5 h-3.5" />
-            保存高清 PNG
+            保存高清图片
           </button>
           <button
             type="button"

@@ -871,7 +871,8 @@ async function handleProxy(request: Request, url: URL): Promise<Response> {
   }
 
   const upstreamHeaders = new Headers({
-    'User-Agent': 'Mozilla/5.0 (compatible; SonicArchive/2.0)',
+    'User-Agent':
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
   });
   if (targetUrl.hostname.endsWith('.gtimg.cn')) {
     upstreamHeaders.set('Referer', 'https://y.qq.com/');
@@ -880,11 +881,16 @@ async function handleProxy(request: Request, url: URL): Promise<Response> {
   if (rangeHeader) {
     upstreamHeaders.set('range', rangeHeader);
   }
+  const ifRangeHeader = request.headers.get('if-range');
+  if (ifRangeHeader) {
+    upstreamHeaders.set('if-range', ifRangeHeader);
+  }
 
   try {
     const upstream = await fetch(targetUrl.toString(), {
       method: request.method === 'HEAD' ? 'HEAD' : 'GET',
       headers: upstreamHeaders,
+      redirect: 'follow',
     });
 
     const outHeaders = new Headers();
@@ -894,14 +900,20 @@ async function handleProxy(request: Request, url: URL): Promise<Response> {
       'content-range',
       'accept-ranges',
       'etag',
+      'last-modified',
     ];
     for (const h of copyHeaders) {
       const v = upstream.headers.get(h);
       if (v) outHeaders.set(h, v);
     }
+    if (!outHeaders.has('accept-ranges')) {
+      outHeaders.set('accept-ranges', 'bytes');
+    }
     outHeaders.set('Access-Control-Allow-Origin', '*');
+    outHeaders.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
     outHeaders.set('Cross-Origin-Resource-Policy', 'cross-origin');
-    outHeaders.set('Cache-Control', 'public, max-age=86400');
+    // `no-transform` prevents mobile proxies from re-encoding/compressing audio byte-ranges (fixes iOS AVPlayer!)
+    outHeaders.set('Cache-Control', 'no-transform, public, max-age=86400');
 
     return new Response(upstream.body, {
       status: upstream.status,

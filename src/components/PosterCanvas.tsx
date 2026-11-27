@@ -65,7 +65,17 @@ export const PosterCanvas: React.FC<PosterCanvasProps> = ({
     }
 
     const img = new Image();
-    if (!url.startsWith('data:')) {
+    let resolvedUrl = url;
+    // Automatically proxy external http(s) covers through same-origin /api/proxy so Canvas NEVER taints!
+    if (
+      /^https?:\/\//i.test(url) &&
+      typeof window !== 'undefined' &&
+      window.location.protocol.startsWith('http') &&
+      !url.startsWith(window.location.origin)
+    ) {
+      resolvedUrl = `/api/proxy?url=${encodeURIComponent(url.replace(/^http:\/\//i, 'https://'))}`;
+    }
+    if (!resolvedUrl.startsWith('data:')) {
       img.crossOrigin = 'anonymous';
     }
 
@@ -91,7 +101,7 @@ export const PosterCanvas: React.FC<PosterCanvasProps> = ({
       renderOnce();
     };
 
-    img.src = url;
+    img.src = resolvedUrl;
     return () => {
       cancelled = true;
     };

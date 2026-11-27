@@ -38,7 +38,11 @@ import {
 } from '../data/curated';
 import { PosterCanvas } from './PosterCanvas';
 import { withAlpha } from '../utils/color';
-import { exportPosterPng, recordDynamicVideoWithAudio } from '../utils/exporter';
+import {
+  exportPosterPng,
+  isMobileOrInAppBrowser,
+  recordDynamicVideoWithAudio,
+} from '../utils/exporter';
 import { buildShareUrl } from '../utils/share';
 import {
   discoverMusicCategory,
@@ -361,11 +365,19 @@ export const StudioView: React.FC<StudioViewProps> = ({
 
   const handleDownloadPng = () => {
     if (!canvasRef.current) return;
-    const url = exportPosterPng(canvasRef.current, song.title, true);
-    if (url) {
-      showToast('高清静止海报 (PNG) 已开始下载');
+    const isMobile = isMobileOrInAppBrowser();
+    // On desktop trigger instant Blob download; on mobile/WeChat open the full-res <img> save sheet
+    // because WeChat & iOS Safari silently block `<a download>` on canvas PNGs.
+    const url = exportPosterPng(canvasRef.current, song.title, !isMobile);
+    if (!url) {
+      showToast('外部封面受跨域限制，请上传本地封面图或稍后重试导出');
+      return;
+    }
+    if (isMobile) {
+      onOpenShare(url, null);
+      showToast('高清海报已生成，请长按图片保存到相册，或点「保存到相册」');
     } else {
-      showToast('外部封面受跨域限制，请上传本地封面图或使用馆藏曲目导出');
+      showToast('高清静止海报 (PNG) 已开始下载');
     }
   };
 

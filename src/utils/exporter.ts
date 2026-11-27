@@ -1,6 +1,81 @@
 import type { Song } from '../types';
 import { audioEngine } from './audioEngine';
 
+export function isMobileOrInAppBrowser(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /iPhone|iPad|iPod|Android|MicroMessenger|Weibo|QQ\/|Mobile|HarmonyOS/i.test(
+    navigator.userAgent
+  );
+}
+
+export function isWeChatBrowser(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /MicroMessenger/i.test(navigator.userAgent);
+}
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const [header, b64] = dataUrl.split(',');
+  const mime = header.match(/:(.*?);/)?.[1] || 'image/png';
+  const bin = atob(b64);
+  const len = bin.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
+/**
+ * Triggers a clean Blob-backed file download (far more reliable than huge `data:` URIs on mobile Chrome & Safari).
+ */
+export function triggerImageDownload(dataUrl: string, songTitle: string): boolean {
+  try {
+    const safeName = (songTitle || 'poster').replace(/[^\w\u4e00-\u9fa5-]+/g, '_');
+    const blob = dataUrlToBlob(dataUrl);
+    const blobUrl = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = `sonic-archive-${safeName}.png`;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 15000);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Attempts native mobile Web Share Sheet (saves straight to iOS/Android Camera Roll / 相册),
+ * returning 'shared' | 'cancelled' | 'unsupported'.
+ */
+export async function tryNativeSaveImage(
+  dataUrl: string,
+  songTitle: string
+): Promise<'shared' | 'cancelled' | 'unsupported'> {
+  if (typeof navigator === 'undefined' || !navigator.share || !navigator.canShare) {
+    return 'unsupported';
+  }
+  try {
+    const safeName = (songTitle || 'poster').replace(/[^\w\u4e00-\u9fa5-]+/g, '_');
+    const blob = dataUrlToBlob(dataUrl);
+    const file = new File([blob], `sonic-archive-${safeName}.png`, { type: 'image/png' });
+    if (!navigator.canShare({ files: [file] })) {
+      return 'unsupported';
+    }
+    await navigator.share({
+      title: `音画 · ${songTitle}`,
+      files: [file],
+    });
+    return 'shared';
+  } catch (err) {
+    if ((err as Error)?.name === 'AbortError') return 'cancelled';
+    return 'unsupported';
+  }
+}
+
 export function exportPosterPng(
   canvas: HTMLCanvasElement,
   songTitle: string,
@@ -9,13 +84,7 @@ export function exportPosterPng(
   try {
     const dataUrl = canvas.toDataURL('image/png');
     if (downloadNow) {
-      const a = document.createElement('a');
-      a.href = dataUrl;
-      const safeName = (songTitle || 'poster').replace(/[^\w\u4e00-\u9fa5-]+/g, '_');
-      a.download = `sparkme-${safeName}.png`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      triggerImageDownload(dataUrl, songTitle);
     }
     return dataUrl;
   } catch {
@@ -42,10 +111,9 @@ export async function recordDynamicVideoWithAudio(options: {
   const { canvas, song, durationMs = 5000, onProgress } = options;
 
   if (typeof canvas.captureStream !== 'function' || typeof MediaRecorder === 'undefined') {
-    throw new Error('当前浏览器不支持动态视频录制，请使用高清 PNG 导出。');
+    throw new Error('当前手机浏览器暂不支持录制动态视频，请点击「导出 PNG」保存高清静态海报。');
   }
 
-  // Ensure audio is playing during recording so exported video has lush sound!
   const wasPlaying = audioEngine.isPlaying();
   if (!wasPlaying) {
     await audioEngine.play(song);
@@ -55,7 +123,7 @@ export async function recordDynamicVideoWithAudio(options: {
   try {
     videoStream = canvas.captureStream(30);
   } catch {
-    throw new Error('当前外部封面受跨域限制无法录制，请切换精选曲目或上传本地封面图。');
+    throw new Error('当前外部封面受跨域限制无法录制，请切换曲目或上传本地封面图。');
   }
 
   const combinedStream = new MediaStream();
@@ -94,7 +162,7 @@ export async function recordDynamicVideoWithAudio(options: {
           })
         : new MediaRecorder(combinedStream);
     } catch {
-      reject(new Error('视频编码器初始化失败，请改用 PNG 导出。'));
+      reject(new Error('视频编码器初始化失败，请改用高清 PNG 保存。'));
       return;
     }
 
@@ -116,13 +184,15 @@ export async function recordDynamicVideoWithAudio(options: {
       const blob = new Blob(chunks, { type: mimeType });
       const blobUrl = URL.createObjectURL(blob);
 
-      const safeName = (song.title || 'motion').replace(/[^\w\u4e00-\u9fa5-]+/g, '_');
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = `sparkme-motion-${safeName}.${ext}`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      if (!isMobileOrInAppBrowser()) {
+        const safeName = (song.title || 'motion').replace(/[^\w\u4e00-\u9fa5-]+/g, '_');
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = `sonic-archive-motion-${safeName}.${ext}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
 
       resolve({ blobUrl, mimeType, ext, hasAudio });
     };

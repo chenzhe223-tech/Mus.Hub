@@ -14,6 +14,12 @@ import { CURATED_SONGS, PRESET_PALETTES } from './data/curated';
 import { audioEngine } from './utils/audioEngine';
 import { buildShareUrl, parseShareHash } from './utils/share';
 import {
+  isMobileOrInAppBrowser,
+  isWeChatBrowser,
+  triggerImageDownload,
+  tryNativeSaveImage,
+} from './utils/exporter';
+import {
   loadDrafts,
   loadPosts,
   loadProfile,
@@ -279,17 +285,28 @@ export default function App() {
     showToast(`已恢复草稿《${draft.song.title}》`);
   };
 
-  const handleDownloadFromShareModal = () => {
+  const handleDownloadFromShareModal = async () => {
     if (!shareModal.previewImgUrl) {
       showToast('当前外部封面受跨域限制，请上传本地封面图后导出');
       return;
     }
-    const a = document.createElement('a');
-    a.href = shareModal.previewImgUrl;
-    a.download = `sonic-archive-${selectedSong.title.replace(/[^\w\u4e00-\u9fa5-]+/g, '_')}.png`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    if (isMobileOrInAppBrowser()) {
+      if (!isWeChatBrowser()) {
+        const res = await tryNativeSaveImage(shareModal.previewImgUrl, selectedSong.title);
+        if (res === 'shared') {
+          showToast('已调起系统菜单，请选择「存储图像」保存到相册');
+          return;
+        }
+        if (res === 'cancelled') return;
+      }
+      // Android Chrome supports Blob download; WeChat / iOS users can always long-press the <img> right above
+      if (!isWeChatBrowser()) {
+        triggerImageDownload(shareModal.previewImgUrl, selectedSong.title);
+      }
+      showToast('如未自动下载，请直接长按上方海报图片 → 保存到手机相册');
+      return;
+    }
+    triggerImageDownload(shareModal.previewImgUrl, selectedSong.title);
     showToast('高清印刷版 PNG 已开始下载');
   };
 
