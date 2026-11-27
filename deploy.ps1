@@ -15,11 +15,11 @@ Write-Host "=========================================================" -Foregrou
 Write-Host "  SONIC ARCHIVE / 音画 Studio - Cloudflare Workers 部署" -ForegroundColor Cyan
 Write-Host "=========================================================" -ForegroundColor Cyan
 
-Write-Step "[1/3] 正在打包前端与音乐搜索接口 (npm run build)..."
-& npm.cmd run build 2>&1 | Tee-Object -FilePath $logFile -Append
+Write-Step "[1/3] 正在执行上线前 QA 门禁验收 (npm run qa)..."
+& npm.cmd run qa 2>&1 | Tee-Object -FilePath $logFile -Append
 if ($LASTEXITCODE -ne 0) {
   Write-Host ""
-  Write-Host "[失败] 打包出错，完整日志已保存到 deploy-log.txt" -ForegroundColor Red
+  Write-Host "[拦截] QA 验收未通过，已禁止发布上线！完整日志已保存到 deploy-log.txt" -ForegroundColor Red
   Read-Host "按回车键退出"
   exit 1
 }

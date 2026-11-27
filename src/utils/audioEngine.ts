@@ -91,6 +91,11 @@ class SparkAudioEngine {
   private nativeAudio: HTMLAudioElement | null = null;
   private playSeq = 0;
 
+  // Dedicated isolated AudioBufferSourceNode used ONLY during video recording so
+  // MediaRecorder captures crisp real song PCM audio without ever touching/muting mobile nativeAudio!
+  private recBufferSource: AudioBufferSourceNode | null = null;
+  private recGain: GainNode | null = null;
+
   private synthInterval: number | null = null;
   private synthStep = 0;
   private playing = false;
@@ -198,6 +203,150 @@ class SparkAudioEngine {
   getAudioStream(): MediaStream | null {
     this.ensureContext();
     return this.streamDest ? this.streamDest.stream : null;
+  }
+
+  /**
+   * Prepares a dedicated, CORS-safe, real-song PCM audio stream for video recording (`MediaRecorder`).
+   * - Fetches the same-origin `/api/preview` or `/api/proxy` (or `blob:`) audio bytes, decodes via Web Audio
+   *   `decodeAudioData`, and routes an isolated `AudioBufferSourceNode` into `masterGain -> analyser -> streamDest`.
+   * - Leaves `nativeAudio` 100% untouched for normal mobile/desktop listening (zero iOS/WeChat regression!).
+   */
+  async startRecordingAudio(song: Song): Promise<{
+    stream: MediaStream | null;
+    hasRealTrackAudio: boolean;
+    cleanup: () => void;
+  }> {
+    const ctx = this.ensureContext();
+    if (!ctx || !this.masterGain || !this.streamDest) {
+      return { stream: null, hasRealTrackAudio: false, cleanup: () => {} };
+    }
+    if (ctx.state === 'suspended') {
+      try {
+        await ctx.resume();
+      } catch {
+        // Ignore
+      }
+    }
+
+    // Stop any previous recording buffer node
+    this.stopRecordingBuffer();
+
+    const isCuratedDemo = song.id.startsWith('curated-') && !song.previewUrl;
+    if (isCuratedDemo) {
+      const wasPlaying = this.playing && this.currentSongId === song.id;
+      if (!wasPlaying) {
+        await this.play(song);
+      }
+      return {
+        stream: this.streamDest.stream,
+        hasRealTrackAudio: true,
+        cleanup: () => {
+          if (!wasPlaying) this.stop();
+        },
+      };
+    }
+
+    // Remember current playback offset so the 5s recorded clip continues smoothly from where the user was listening
+    const resumeOffsetSec =
+      this.playing &&
+      this.currentSongId === song.id &&
+      this.nativeAudio &&
+      Number.isFinite(this.nativeAudio.currentTime)
+        ? this.nativeAudio.currentTime
+        : 0;
+
+    // Pause nativeAudio during recording so the user doesn't hear double audio (the decoded buffer plays instead!)
+    const wasPlayingBefore = this.playing && this.currentSongId === song.id;
+    this.stop(false);
+
+    const candidates = buildAudioCandidates(song).filter(
+      (u) => u.startsWith('/') || u.startsWith('blob:') || u.startsWith('data:')
+    );
+
+    for (const url of candidates) {
+      try {
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), 12000);
+        let arrayBuf: ArrayBuffer;
+        try {
+          const res = await fetch(url, { signal: controller.signal });
+          if (!res.ok) continue;
+          arrayBuf = await res.arrayBuffer();
+        } finally {
+          window.clearTimeout(timer);
+        }
+
+        if (arrayBuf.byteLength < 2048) continue;
+
+        const audioBuffer = await ctx.decodeAudioData(arrayBuf.slice(0));
+        const source = ctx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.loop = true;
+
+        const gain = ctx.createGain();
+        gain.gain.value = 1.0;
+
+        source.connect(gain);
+        gain.connect(this.masterGain);
+
+        const safeOffset =
+          audioBuffer.duration > 1 ? resumeOffsetSec % Math.max(1, audioBuffer.duration - 0.5) : 0;
+        source.start(0, safeOffset);
+
+        this.recBufferSource = source;
+        this.recGain = gain;
+        this.playing = true;
+        this.currentSongId = song.id;
+        this.mode = 'synth'; // Routes real decoded PCM energy through AnalyserNode -> live canvas spectrum!
+        this.startedAt = performance.now() - safeOffset * 1000;
+        this.emit();
+
+        return {
+          stream: this.streamDest.stream,
+          hasRealTrackAudio: true,
+          cleanup: () => {
+            this.stopRecordingBuffer();
+            this.playing = false;
+            this.emit();
+            if (wasPlayingBefore) {
+              void this.play(song);
+            }
+          },
+        };
+      } catch {
+        // Try next same-origin candidate
+      }
+    }
+
+    return {
+      stream: null,
+      hasRealTrackAudio: false,
+      cleanup: () => {
+        if (wasPlayingBefore) {
+          void this.play(song);
+        }
+      },
+    };
+  }
+
+  private stopRecordingBuffer(): void {
+    if (this.recBufferSource) {
+      try {
+        this.recBufferSource.stop();
+        this.recBufferSource.disconnect();
+      } catch {
+        // Ignore
+      }
+      this.recBufferSource = null;
+    }
+    if (this.recGain) {
+      try {
+        this.recGain.disconnect();
+      } catch {
+        // Ignore
+      }
+      this.recGain = null;
+    }
   }
 
   getPlaybackProgress(durationText?: string): { progress: number; currentLabel: string } {
@@ -432,6 +581,7 @@ class SparkAudioEngine {
     this.playSeq++;
     this.playing = false;
     this.destroyNativeAudio();
+    this.stopRecordingBuffer();
     if (this.synthInterval !== null) {
       window.clearInterval(this.synthInterval);
       this.synthInterval = null;

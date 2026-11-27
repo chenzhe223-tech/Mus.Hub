@@ -95,9 +95,19 @@ export const ShareModal: React.FC<ShareModalProps> = ({
 
         {videoBlobUrl ? (
           <div className="space-y-2">
-            <div className="text-xs text-[var(--accent)] font-medium flex items-center gap-1.5">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              有声动态海报已录制完成
+            <div className="flex items-center justify-between text-xs text-[var(--accent)] font-medium">
+              <span className="flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                有声动态海报已录制完成
+              </span>
+              <a
+                href={videoBlobUrl}
+                download={`sonic-archive-motion-${(song.title || 'video').replace(/[^\w\u4e00-\u9fa5-]+/g, '_')}.webm`}
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-[var(--accent-soft)] border border-[var(--accent-border)] text-[11px] hover:bg-[var(--accent)] hover:text-[var(--accent-ink)] transition"
+              >
+                <Download className="w-3 h-3" />
+                下载视频
+              </a>
             </div>
             <video
               src={videoBlobUrl}

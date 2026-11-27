@@ -1,0 +1,27 @@
+name: Mus.Hub QA Acceptance Gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  qa-gate:
+    name: P0 Release Acceptance Gate (npm run qa)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run full QA Acceptance Gate (P0-1 through P0-7)
+        run: npm run qa

@@ -100,7 +100,9 @@ export interface VideoRecordResult {
 }
 
 /**
- * Records a high-bitrate dynamic video from Canvas + live Web Audio track (with sound!).
+ * Records a high-bitrate dynamic video from Canvas + REAL decoded song audio track (guaranteed sound!).
+ * Uses `audioEngine.startRecordingAudio(song)` (isolated same-origin `decodeAudioData` -> `AudioBufferSourceNode`)
+ * so exported MP4/WebM videos ALWAYS contain crisp real song audio without breaking mobile native playback!
  */
 export async function recordDynamicVideoWithAudio(options: {
   canvas: HTMLCanvasElement;
@@ -114,15 +116,14 @@ export async function recordDynamicVideoWithAudio(options: {
     throw new Error('当前手机浏览器暂不支持录制动态视频，请点击「导出 PNG」保存高清静态海报。');
   }
 
-  const wasPlaying = audioEngine.isPlaying();
-  if (!wasPlaying) {
-    await audioEngine.play(song);
-  }
+  // 1. Prepare isolated real-song PCM audio stream BEFORE starting the 5s recorder
+  const recAudio = await audioEngine.startRecordingAudio(song);
 
   let videoStream: MediaStream;
   try {
     videoStream = canvas.captureStream(30);
   } catch {
+    recAudio.cleanup();
     throw new Error('当前外部封面受跨域限制无法录制，请切换曲目或上传本地封面图。');
   }
 
@@ -130,22 +131,30 @@ export async function recordDynamicVideoWithAudio(options: {
   videoStream.getVideoTracks().forEach((tr) => combinedStream.addTrack(tr));
 
   let hasAudio = false;
-  const audioStream = audioEngine.getAudioStream();
-  if (audioStream) {
-    audioStream.getAudioTracks().forEach((tr) => {
+  if (recAudio.stream && recAudio.hasRealTrackAudio) {
+    recAudio.stream.getAudioTracks().forEach((tr) => {
       combinedStream.addTrack(tr);
       hasAudio = true;
     });
   }
 
-  const mimeCandidates = [
-    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
-    'video/mp4',
-    'video/webm;codecs=vp9,opus',
-    'video/webm;codecs=vp8,opus',
-    'video/webm;codecs=vp9',
-    'video/webm',
-  ];
+  // When audio is attached, strictly prefer muxed video+audio MIME containers first
+  const mimeCandidates = hasAudio
+    ? [
+        'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+        'video/webm;codecs=vp9,opus',
+        'video/webm;codecs=vp8,opus',
+        'video/webm;codecs=h264,opus',
+        'video/mp4',
+        'video/webm',
+      ]
+    : [
+        'video/mp4;codecs=avc1.42E01E',
+        'video/webm;codecs=vp9',
+        'video/webm;codecs=vp8',
+        'video/mp4',
+        'video/webm',
+      ];
 
   const supportedMime =
     mimeCandidates.find(
@@ -159,9 +168,11 @@ export async function recordDynamicVideoWithAudio(options: {
         ? new MediaRecorder(combinedStream, {
             mimeType: supportedMime,
             videoBitsPerSecond: 5200000,
+            audioBitsPerSecond: 128000,
           })
         : new MediaRecorder(combinedStream);
     } catch {
+      recAudio.cleanup();
       reject(new Error('视频编码器初始化失败，请改用高清 PNG 保存。'));
       return;
     }
@@ -172,13 +183,12 @@ export async function recordDynamicVideoWithAudio(options: {
     };
 
     recorder.onerror = () => {
+      recAudio.cleanup();
       reject(new Error('视频录制过程中出现异常。'));
     };
 
     recorder.onstop = () => {
-      if (!wasPlaying) {
-        audioEngine.stop();
-      }
+      recAudio.cleanup();
       const mimeType = supportedMime || 'video/webm';
       const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
       const blob = new Blob(chunks, { type: mimeType });

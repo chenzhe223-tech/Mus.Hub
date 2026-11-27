@@ -397,8 +397,8 @@ export const StudioView: React.FC<StudioViewProps> = ({
       const pngUrl = exportPosterPng(canvasRef.current, song.title, false);
       showToast(
         result.hasAudio
-          ? `5秒有声动态海报 (${result.ext.toUpperCase()}) 已导出`
-          : `5秒动态海报 (${result.ext.toUpperCase()}) 已导出`
+          ? `5秒有声动态海报（含真实歌曲音轨 · ${result.ext.toUpperCase()}）已导出`
+          : `5秒动态海报 (${result.ext.toUpperCase()}) 已导出（该曲目无可用原曲音轨，仅含画面）`
       );
       onOpenShare(pngUrl, result.blobUrl);
     } catch (err) {
