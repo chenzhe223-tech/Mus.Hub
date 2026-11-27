@@ -1,0 +1,162 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    color-scheme: dark;
+    --bg-canvas: #0c0b0a;
+    --bg-header: rgba(12, 11, 10, 0.92);
+    --bg-panel: #141311;
+    --bg-stage-top: #161412;
+    --bg-stage-bot: #100f0d;
+    --bg-elevated: #1f1c18;
+    --bg-inset: #0e0d0b;
+    --bg-hover: #1b1916;
+
+    --ink-primary: #f2ede4;
+    --ink-secondary: #a1998c;
+    --ink-muted: #736b60;
+
+    --accent: #d4a359;
+    --accent-hover: #e0b168;
+    --accent-soft: rgba(212, 163, 89, 0.14);
+    --accent-border: rgba(212, 163, 89, 0.55);
+    --accent-ink: #11100e;
+    --heart: #d94e34;
+
+    --btn-primary-bg: #f2ede4;
+    --btn-primary-hover: #ffffff;
+    --btn-primary-ink: #11100e;
+
+    --line-subtle: rgba(242, 237, 228, 0.09);
+    --line-strong: rgba(242, 237, 228, 0.18);
+    --dot-color: rgba(242, 237, 228, 0.028);
+    --stage-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 24px 60px -20px rgba(0, 0, 0, 0.75);
+    --inset-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.45);
+    --poster-shadow: 0 34px 70px -22px rgba(0, 0, 0, 0.88), 0 12px 24px -10px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(242, 237, 228, 0.1);
+  }
+
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg-canvas: #faf5ec;
+    --bg-header: rgba(250, 245, 236, 0.9);
+    --bg-panel: #fffdf9;
+    --bg-stage-top: #fffdfa;
+    --bg-stage-bot: #f6efe3;
+    --bg-elevated: #f5ecde;
+    --bg-inset: #f2eadc;
+    --bg-hover: #f7f0e4;
+
+    --ink-primary: #221c16;
+    --ink-secondary: #5f5346;
+    --ink-muted: #8f8273;
+
+    --accent: #d96236;
+    --accent-hover: #e57145;
+    --accent-soft: rgba(217, 98, 54, 0.11);
+    --accent-border: rgba(217, 98, 54, 0.5);
+    --accent-ink: #fffdf9;
+    --heart: #e04a3a;
+
+    --btn-primary-bg: #221c16;
+    --btn-primary-hover: #382e24;
+    --btn-primary-ink: #fffdf9;
+
+    --line-subtle: rgba(34, 28, 22, 0.09);
+    --line-strong: rgba(34, 28, 22, 0.18);
+    --dot-color: rgba(168, 120, 66, 0.08);
+    --stage-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 20px 50px -22px rgba(120, 82, 38, 0.18);
+    --inset-shadow: inset 0 1px 3px rgba(96, 68, 36, 0.09);
+    --poster-shadow: 0 28px 56px -18px rgba(84, 56, 28, 0.34), 0 10px 22px -8px rgba(84, 56, 28, 0.18), 0 0 0 1px rgba(34, 28, 22, 0.08);
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+    background-color: var(--bg-canvas);
+    color: var(--ink-primary);
+    overflow-x: hidden;
+    transition: background-color 0.28s ease, color 0.28s ease;
+  }
+}
+
+.studio-grain {
+  background-image: radial-gradient(var(--dot-color) 1px, transparent 0);
+  background-size: 24px 24px;
+}
+
+.font-editorial {
+  font-family: Georgia, "Songti SC", "STSong", "Noto Serif SC", serif;
+}
+
+.font-tech {
+  font-family: "SFMono-Regular", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.hi-fi-panel {
+  background-color: var(--bg-panel);
+  border: 1px solid var(--line-subtle);
+  transition: background-color 0.25s ease, border-color 0.25s ease;
+}
+
+.hi-fi-stage {
+  background: linear-gradient(180deg, var(--bg-stage-top) 0%, var(--bg-stage-bot) 100%);
+  border: 1px solid var(--line-subtle);
+  box-shadow: var(--stage-shadow);
+  transition: background 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+.hi-fi-inset {
+  background-color: var(--bg-inset);
+  border: 1px solid var(--line-subtle);
+  box-shadow: var(--inset-shadow);
+  transition: background-color 0.25s ease, border-color 0.25s ease;
+}
+
+.poster-elevation {
+  box-shadow: var(--poster-shadow);
+}
+
+.custom-scroll::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.custom-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scroll::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 999px;
+}
+
+.custom-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+}
+
+@keyframes heartPop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.34); }
+  75% { transform: scale(0.92); }
+  100% { transform: scale(1); }
+}
+
+.heart-pop {
+  animation: heartPop 0.34s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes vuBounce {
+  0%, 100% { transform: scaleY(0.3); }
+  50% { transform: scaleY(1); }
+}
+
+.vu-bar-1 { animation: vuBounce 0.72s ease-in-out infinite; }
+.vu-bar-2 { animation: vuBounce 0.56s ease-in-out 0.15s infinite; }
+.vu-bar-3 { animation: vuBounce 0.84s ease-in-out 0.3s infinite; }
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

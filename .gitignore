@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.wrangler/
+.tmp-xdg/
+deploy-log.txt
+publish-log.txt
+.env
+.env.*
+*.log
+.DS_Store
+Thumbs.db
