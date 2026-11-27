@@ -48,8 +48,16 @@ export interface Song {
   chordFreqs?: number[];
   bpm?: number;
   externalUrl?: string;
-  source?: 'curated' | 'itunes' | 'deezer' | 'netease' | 'local';
+  externalLinks?: {
+    netease?: string;
+    qq?: string;
+    apple?: string;
+    spotify?: string;
+  };
+  source?: 'curated' | 'itunes' | 'apple-music' | 'deezer' | 'netease' | 'qq' | 'local' | 'ai-voice';
   neteaseId?: string;
+  qqMid?: string;
+  isAiOriginal?: boolean;
 }
 
 export interface PosterConfig {

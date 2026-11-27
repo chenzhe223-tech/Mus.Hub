@@ -1,4 +1,23 @@
-import { canonicalTrackKey, expandMusicQuery, toTraditionalChinese } from './musicAliases';
+import {
+  buildExternalMusicLinks,
+  canonicalTrackKey,
+  expandMusicQuery,
+  toTraditionalChinese,
+  type ExternalMusicLinks,
+} from './musicAliases';
+
+export interface MusicApiEnv {
+  APPLE_MUSIC_TOKEN?: string;
+  MUSIC_GATEWAY_URL?: string;
+  ACR_HOST?: string;
+  ACR_ACCESS_KEY?: string;
+  ACR_ACCESS_SECRET?: string;
+  AUDD_API_TOKEN?: string;
+  MINIMAX_API_KEY?: string;
+  GEMINI_API_KEY?: string;
+  VOICE_CLONE_ENDPOINT?: string;
+  VOICE_CLONE_SECRET?: string;
+}
 
 export interface UnifiedTrack {
   id: string;
@@ -11,9 +30,11 @@ export interface UnifiedTrack {
   rawCover: string;
   previewUrl: string | null;
   rawPreviewUrl: string | null;
-  source: 'itunes' | 'deezer' | 'netease';
+  source: 'itunes' | 'apple-music' | 'deezer' | 'netease' | 'qq';
   externalUrl?: string;
+  externalLinks: ExternalMusicLinks;
   neteaseId?: string;
+  qqMid?: string;
 }
 
 const ALLOWED_PROXY_SUFFIXES = [
@@ -22,9 +43,15 @@ const ALLOWED_PROXY_SUFFIXES = [
   '.dzcdn.net',
   '.deezer.com',
   '.music.126.net',
+  '.gtimg.cn',
+  '.qqmusic.qq.com',
 ];
 
-function jsonResponse(data: unknown, status = 200, extraHeaders?: Record<string, string>): Response {
+export function jsonResponse(
+  data: unknown,
+  status = 200,
+  extraHeaders?: Record<string, string>
+): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
@@ -70,9 +97,6 @@ async function fetchJsonWithTimeout<T>(
   }
 }
 
-/**
- * Extracts clean search query from plain text OR pasted NetEase / QQ Music / Apple Music / Spotify share text.
- */
 export function cleanMusicQuery(raw: string): string {
   let q = (raw || '').trim();
   if (!q) return '';
@@ -95,14 +119,82 @@ export function cleanMusicQuery(raw: string): string {
   return q || raw.trim();
 }
 
-function buildProxyPath(targetUrl: string): string {
+export function buildProxyPath(targetUrl: string): string {
   const httpsUrl = targetUrl.replace(/^http:\/\//i, 'https://');
   return `/api/proxy?url=${encodeURIComponent(httpsUrl)}`;
 }
 
+/**
+ * Official Apple Music Catalog API (auto-activates when APPLE_MUSIC_TOKEN secret is configured).
+ * High quota, zero shared-IP throttling, official 30s AAC previews across TW/HK/SG/US/CN!
+ */
+async function searchAppleMusicOfficial(
+  term: string,
+  storefront: 'tw' | 'hk' | 'sg' | 'us' | 'cn',
+  token: string,
+  limit = 20,
+  offset = 0
+): Promise<UnifiedTrack[]> {
+  if (!term.trim() || !token) return [];
+  const url = `https://api.music.apple.com/v1/catalog/${storefront}/search?term=${encodeURIComponent(
+    term
+  )}&types=songs&limit=${limit}&offset=${offset}`;
+
+  interface AppleMusicResp {
+    results?: {
+      songs?: {
+        data?: Array<{
+          id?: string;
+          attributes?: {
+            name?: string;
+            artistName?: string;
+            albumName?: string;
+            durationInMillis?: number;
+            url?: string;
+            artwork?: { url?: string };
+            previews?: Array<{ url?: string }>;
+          };
+        }>;
+      };
+    };
+  }
+
+  const data = await fetchJsonWithTimeout<AppleMusicResp>(url, 5000, {
+    Authorization: `Bearer ${token}`,
+  });
+  const songs = data?.results?.songs?.data;
+  if (!songs?.length) return [];
+
+  return songs
+    .filter((s) => s.attributes?.name && s.attributes?.artistName)
+    .map((s) => {
+      const a = s.attributes!;
+      const rawCover = (a.artwork?.url || '').replace('{w}', '600').replace('{h}', '600');
+      const rawPreview = a.previews?.[0]?.url || null;
+      const ms = Number(a.durationInMillis) || 210000;
+      const title = a.name!.trim();
+      const artist = a.artistName!.trim();
+      return {
+        id: `apple-${storefront}-${s.id || Math.random().toString(36).slice(2)}`,
+        title,
+        artist,
+        album: (a.albumName || '单曲').trim(),
+        duration: formatDurationMs(ms),
+        durationMs: ms,
+        cover: rawCover ? buildProxyPath(rawCover) : '',
+        rawCover,
+        previewUrl: rawPreview ? buildProxyPath(rawPreview) : null,
+        rawPreviewUrl: rawPreview,
+        source: 'apple-music' as const,
+        externalUrl: a.url,
+        externalLinks: buildExternalMusicLinks(title, artist, { appleUrl: a.url }),
+      };
+    });
+}
+
 async function searchItunes(
   term: string,
-  country: 'CN' | 'TW' | 'HK' | 'US',
+  country: 'CN' | 'TW' | 'HK' | 'SG' | 'US',
   limit: number,
   offset = 0
 ): Promise<UnifiedTrack[]> {
@@ -134,10 +226,12 @@ async function searchItunes(
       const rawCover = (item.artworkUrl100 || '').replace(/100x100bb/i, '600x600bb');
       const rawPreview = item.previewUrl || null;
       const ms = Number(item.trackTimeMillis) || 210000;
+      const title = item.trackName!.trim();
+      const artist = item.artistName!.trim();
       return {
         id: `itunes-${country.toLowerCase()}-${item.trackId ?? Math.random().toString(36).slice(2)}`,
-        title: item.trackName!.trim(),
-        artist: item.artistName!.trim(),
+        title,
+        artist,
         album: (item.collectionName || '单曲').trim(),
         duration: formatDurationMs(ms),
         durationMs: ms,
@@ -147,6 +241,7 @@ async function searchItunes(
         rawPreviewUrl: rawPreview,
         source: 'itunes' as const,
         externalUrl: item.trackViewUrl,
+        externalLinks: buildExternalMusicLinks(title, artist, { appleUrl: item.trackViewUrl }),
       };
     });
 }
@@ -178,10 +273,12 @@ async function searchDeezer(term: string, limit: number, offset = 0): Promise<Un
       const rawCover = item.album?.cover_big || item.album?.cover_xl || item.album?.cover_medium || '';
       const rawPreview = item.preview || null;
       const ms = (Number(item.duration) || 210) * 1000;
+      const title = item.title!.trim();
+      const artist = item.artist!.name!.trim();
       return {
         id: `deezer-${item.id ?? Math.random().toString(36).slice(2)}`,
-        title: item.title!.trim(),
-        artist: item.artist!.name!.trim(),
+        title,
+        artist,
         album: (item.album?.title || 'Single').trim(),
         duration: formatDurationMs(ms),
         durationMs: ms,
@@ -191,58 +288,140 @@ async function searchDeezer(term: string, limit: number, offset = 0): Promise<Un
         rawPreviewUrl: rawPreview,
         source: 'deezer' as const,
         externalUrl: item.link,
+        externalLinks: buildExternalMusicLinks(title, artist),
       };
     });
 }
 
 /**
- * NetEase Cloud Music public web search (extra Mainland Mandopop coverage + Chinese lyrics ID).
+ * QQ Music public search endpoint (best-effort metadata + exact QQ Music songmid deep link + HD cover).
  */
-async function searchNetease(term: string, limit: number, offset = 0): Promise<UnifiedTrack[]> {
+async function searchQQMusic(term: string, limit: number, page = 1): Promise<UnifiedTrack[]> {
   if (!term.trim()) return [];
-  const url = `https://music.163.com/api/search/get/web?csrf_token=&type=1&offset=${offset}&total=true&limit=${limit}&s=${encodeURIComponent(
+  const url = `https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w=${encodeURIComponent(
     term
-  )}`;
+  )}&n=${limit}&p=${page}&format=json&cr=1&new_json=1`;
 
-  interface NeteaseResponse {
-    result?: {
-      songs?: Array<{
-        id?: number;
-        name?: string;
-        duration?: number;
-        artists?: Array<{ name?: string }>;
-        album?: {
+  interface QQSearchResp {
+    data?: {
+      song?: {
+        list?: Array<{
+          mid?: string;
+          songmid?: string;
           name?: string;
-          picUrl?: string;
-          artist?: { img1v1Url?: string };
-        };
-      }>;
+          songname?: string;
+          interval?: number;
+          singer?: Array<{ name?: string }>;
+          album?: { name?: string; mid?: string };
+          albumname?: string;
+          albummid?: string;
+        }>;
+      };
     };
   }
 
-  const data = await fetchJsonWithTimeout<NeteaseResponse>(url, 4000, {
-    Referer: 'https://music.163.com/',
+  const data = await fetchJsonWithTimeout<QQSearchResp>(url, 3800, {
+    Referer: 'https://y.qq.com/',
   });
-  const songs = data?.result?.songs;
+  const list = data?.data?.song?.list;
+  if (!list?.length) return [];
+
+  return list
+    .filter((s) => (s.name || s.songname) && (s.mid || s.songmid))
+    .map((s) => {
+      const mid = (s.mid || s.songmid)!;
+      const albumMid = s.album?.mid || s.albummid || '';
+      const rawCover = albumMid
+        ? `https://y.gtimg.cn/music/photo_new/T002R500x500M000${albumMid}.jpg`
+        : '';
+      const title = (s.name || s.songname || '').trim();
+      const artist =
+        (s.singer || [])
+          .map((a) => a.name)
+          .filter(Boolean)
+          .slice(0, 2)
+          .join(' / ') || '未知歌手';
+      const ms = (Number(s.interval) || 210) * 1000;
+      return {
+        id: `qq-${mid}`,
+        qqMid: mid,
+        title,
+        artist,
+        album: (s.album?.name || s.albumname || '单曲').trim(),
+        duration: formatDurationMs(ms),
+        durationMs: ms,
+        cover: rawCover ? buildProxyPath(rawCover) : '',
+        rawCover,
+        previewUrl: null,
+        rawPreviewUrl: null,
+        source: 'qq' as const,
+        externalUrl: `https://y.qq.com/n/ryqq/songDetail/${mid}`,
+        externalLinks: buildExternalMusicLinks(title, artist, { qqMid: mid }),
+      };
+    });
+}
+
+/**
+ * NetEase Cloud Music search (tries cloudsearch/pc then fallback get/web; provides exact neteaseId + CN lyrics).
+ */
+async function searchNetease(term: string, limit: number, offset = 0): Promise<UnifiedTrack[]> {
+  if (!term.trim()) return [];
+  const endpoints = [
+    `https://music.163.com/api/cloudsearch/pc?s=${encodeURIComponent(
+      term
+    )}&type=1&limit=${limit}&offset=${offset}`,
+    `https://music.163.com/api/search/get/web?csrf_token=&type=1&offset=${offset}&total=true&limit=${limit}&s=${encodeURIComponent(
+      term
+    )}`,
+  ];
+
+  interface NeteaseSong {
+    id?: number;
+    name?: string;
+    dt?: number;
+    duration?: number;
+    ar?: Array<{ name?: string }>;
+    artists?: Array<{ name?: string }>;
+    al?: { name?: string; picUrl?: string };
+    album?: { name?: string; picUrl?: string; artist?: { img1v1Url?: string } };
+  }
+  interface NeteaseResponse {
+    result?: { songs?: NeteaseSong[] };
+  }
+
+  let songs: NeteaseSong[] | undefined;
+  for (const ep of endpoints) {
+    const data = await fetchJsonWithTimeout<NeteaseResponse>(ep, 3500, {
+      Referer: 'https://music.163.com/',
+    });
+    if (data?.result?.songs?.length) {
+      songs = data.result.songs;
+      break;
+    }
+  }
   if (!songs?.length) return [];
 
   return songs
-    .filter((s) => s.id && s.name && s.artists?.length)
+    .filter((s) => s.id && s.name && (s.ar?.length || s.artists?.length))
     .map((s) => {
-      const pic = s.album?.picUrl || s.album?.artist?.img1v1Url || '';
+      const pic = s.al?.picUrl || s.album?.picUrl || s.album?.artist?.img1v1Url || '';
       const rawCover = pic ? `${pic.replace(/^http:\/\//i, 'https://')}?param=600y600` : '';
-      const artist = s.artists!
-        .map((a) => a.name)
-        .filter(Boolean)
-        .slice(0, 2)
-        .join(' / ');
-      const ms = Number(s.duration) || 210000;
+      const artistList = s.ar || s.artists || [];
+      const artist =
+        artistList
+          .map((a) => a.name)
+          .filter(Boolean)
+          .slice(0, 2)
+          .join(' / ') || '未知歌手';
+      const ms = Number(s.dt || s.duration) || 210000;
+      const title = s.name!.trim();
+      const neteaseId = String(s.id);
       return {
-        id: `netease-${s.id}`,
-        neteaseId: String(s.id),
-        title: s.name!.trim(),
-        artist: artist || '未知歌手',
-        album: (s.album?.name || '单曲').trim(),
+        id: `netease-${neteaseId}`,
+        neteaseId,
+        title,
+        artist,
+        album: (s.al?.name || s.album?.name || '单曲').trim(),
         duration: formatDurationMs(ms),
         durationMs: ms,
         cover: rawCover ? buildProxyPath(rawCover) : '',
@@ -250,13 +429,14 @@ async function searchNetease(term: string, limit: number, offset = 0): Promise<U
         previewUrl: null,
         rawPreviewUrl: null,
         source: 'netease' as const,
-        externalUrl: `https://music.163.com/#/song?id=${s.id}`,
+        externalUrl: `https://music.163.com/#/song?id=${neteaseId}`,
+        externalLinks: buildExternalMusicLinks(title, artist, { neteaseId }),
       };
     });
 }
 
 function scoreTrackRelevance(track: UnifiedTrack, queryTerms: string[]): number {
-  let score = track.rawPreviewUrl ? 30 : 0;
+  let score = track.rawPreviewUrl ? 40 : 0;
   if (!queryTerms.length) return score;
 
   const titleNorm = toTraditionalChinese(track.title).toLowerCase();
@@ -266,18 +446,18 @@ function scoreTrackRelevance(track: UnifiedTrack, queryTerms: string[]): number 
   for (const term of queryTerms) {
     const t = toTraditionalChinese(term).toLowerCase().trim();
     if (!t) continue;
-    if (titleNorm === t) score += 60;
-    else if (artistNorm === t) score += 50;
-    else if (titleNorm.includes(t)) score += 35;
-    else if (artistNorm.includes(t)) score += 30;
+    if (titleNorm === t) score += 70;
+    else if (artistNorm === t) score += 55;
+    else if (titleNorm.includes(t)) score += 38;
+    else if (artistNorm.includes(t)) score += 32;
     else {
-      const parts = t.split(/\s+/).filter((p) => p.length > 0);
+      const parts = t.split(/\s+/).filter(Boolean);
       let hits = 0;
       for (const p of parts) {
         if (combined.includes(p)) hits++;
       }
-      if (parts.length > 0 && hits === parts.length) score += 45;
-      else score += hits * 15;
+      if (parts.length > 0 && hits === parts.length) score += 55;
+      else score += hits * 16;
     }
   }
   return score;
@@ -296,13 +476,20 @@ function mergeAndDedupeTracks(lists: UnifiedTrack[][], queryTerms: string[] = []
         byKey.set(key, track);
         orderedKeys.push(key);
       } else {
-        // Cross-enrich audio preview & NetEase ID across sources!
         if (!existing.neteaseId && track.neteaseId) {
           existing.neteaseId = track.neteaseId;
+          existing.externalLinks.netease = track.externalLinks.netease;
+        }
+        if (!existing.qqMid && track.qqMid) {
+          existing.qqMid = track.qqMid;
+          existing.externalLinks.qq = track.externalLinks.qq;
         }
         if (!existing.previewUrl && track.previewUrl) {
           existing.previewUrl = track.previewUrl;
           existing.rawPreviewUrl = track.rawPreviewUrl;
+        }
+        if (track.externalUrl?.includes('music.apple.com')) {
+          existing.externalLinks.apple = track.externalUrl;
         }
       }
     }
@@ -317,60 +504,111 @@ function mergeAndDedupeTracks(lists: UnifiedTrack[][], queryTerms: string[] = []
   return deduped;
 }
 
-async function handleSearch(url: URL): Promise<Response> {
-  const rawQ = url.searchParams.get('q') || '';
+export async function searchUnifiedTracks(
+  rawQ: string,
+  opts?: { limit?: number; offset?: number; env?: MusicApiEnv }
+): Promise<{
+  cleanedQuery: string;
+  expanded: ReturnType<typeof expandMusicQuery>;
+  tracks: UnifiedTrack[];
+  hasMore: boolean;
+}> {
   const cleaned = cleanMusicQuery(rawQ);
-  const limit = Math.min(40, Math.max(8, Number(url.searchParams.get('limit')) || 28));
-  const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
+  const limit = Math.min(40, Math.max(8, opts?.limit || 28));
+  const offset = Math.max(0, opts?.offset || 0);
+  const expanded = expandMusicQuery(cleaned);
 
   if (!cleaned) {
-    return jsonResponse({ query: '', cleanedQuery: '', total: 0, hasMore: false, results: [] });
+    return { cleanedQuery: '', expanded, tracks: [], hasMore: false };
   }
 
-  const expanded = expandMusicQuery(cleaned);
-  const queryTerms = [expanded.primary, expanded.traditional, expanded.englishAlias || ''].filter(
-    Boolean
-  );
+  const queryTerms = [
+    expanded.primary,
+    expanded.traditional,
+    expanded.songHintTrad || '',
+    expanded.englishAlias || '',
+  ].filter(Boolean);
 
-  // Query Deezer (high rate limit: 50 req/5s) + multi-region Apple Music (TW/HK/CN/US) + NetEase in parallel
   const tasks: Array<Promise<UnifiedTrack[]>> = [];
+  const appleToken = opts?.env?.APPLE_MUSIC_TOKEN;
 
-  // 1. Deezer with English alias (if known, e.g. "Stefanie Sun" or "Taylor Swift") + primary
+  // 1. Official Apple Music API if developer token is present
+  if (appleToken) {
+    const storefront = expanded.isCjk ? 'tw' : 'us';
+    tasks.push(
+      searchAppleMusicOfficial(
+        expanded.songHintTrad || expanded.traditional,
+        storefront,
+        appleToken,
+        24,
+        offset
+      )
+    );
+    if (expanded.isCjk) {
+      tasks.push(searchAppleMusicOfficial(expanded.traditional, 'hk', appleToken, 14, offset));
+    }
+  }
+
+  // 2. Deezer (50 req/5s generous limit, real 30s MP3 previews!)
   if (expanded.englishAlias) {
     tasks.push(searchDeezer(expanded.englishAlias, 20, offset));
   }
+  if (expanded.songHintTrad && expanded.songHintTrad !== expanded.englishAlias) {
+    tasks.push(searchDeezer(expanded.songHintTrad, 14, offset));
+  }
   tasks.push(searchDeezer(expanded.traditional, 16, offset));
 
-  // 2. Apple iTunes: TW (full Mandopop/Cantopop catalog w/ Traditional Chinese), US (Western + global), CN (Mainland)
+  // 3. Multi-Region Apple iTunes (TW + HK + SG + CN + US)
   if (expanded.isCjk) {
-    tasks.push(searchItunes(expanded.traditional, 'TW', 20, offset));
-    tasks.push(searchItunes(expanded.primary, 'CN', 16, offset));
-    if (expanded.englishAlias) {
-      tasks.push(searchItunes(expanded.englishAlias, 'US', 12, offset));
+    if (expanded.songHintTrad) {
+      tasks.push(searchItunes(expanded.songHintTrad, 'TW', 16, offset));
+      tasks.push(searchItunes(expanded.songHintTrad, 'SG', 12, offset));
     }
-    tasks.push(searchNetease(expanded.primary, 14, offset));
+    tasks.push(searchItunes(expanded.traditional, 'TW', 18, offset));
+    tasks.push(searchItunes(expanded.traditional, 'HK', 14, offset));
+    tasks.push(searchItunes(expanded.primary, 'CN', 14, offset));
+    tasks.push(searchNetease(expanded.primary, 12, offset));
+    tasks.push(searchQQMusic(expanded.primary, 10, Math.floor(offset / 10) + 1));
   } else {
-    tasks.push(searchItunes(expanded.englishAlias || expanded.primary, 'US', 22, offset));
-    tasks.push(searchItunes(expanded.primary, 'TW', 12, offset));
+    tasks.push(searchItunes(expanded.englishAlias || expanded.primary, 'US', 24, offset));
+    tasks.push(searchItunes(expanded.primary, 'TW', 10, offset));
   }
 
   const batches = await Promise.all(tasks);
   const deduped = mergeAndDedupeTracks(batches, queryTerms);
 
+  return {
+    cleanedQuery: cleaned,
+    expanded,
+    tracks: deduped.slice(0, limit),
+    hasMore: deduped.length >= 10 && offset < 80,
+  };
+}
+
+async function handleSearch(url: URL, env?: MusicApiEnv): Promise<Response> {
+  const rawQ = url.searchParams.get('q') || '';
+  const limit = Math.min(40, Math.max(8, Number(url.searchParams.get('limit')) || 28));
+  const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
+
+  const { cleanedQuery, expanded, tracks, hasMore } = await searchUnifiedTracks(rawQ, {
+    limit,
+    offset,
+    env,
+  });
+
   return jsonResponse(
     {
       query: rawQ,
-      cleanedQuery: cleaned,
+      cleanedQuery,
       expanded,
       offset,
-      total: deduped.length,
-      hasMore: deduped.length >= 10 && offset < 80,
-      results: deduped.slice(0, limit),
+      total: tracks.length,
+      hasMore,
+      results: tracks,
     },
     200,
     {
-      // Only cache non-empty search results at edge so transient rate limits never stick
-      'Cache-Control': deduped.length > 0 ? 'public, max-age=3600' : 'no-store',
+      'Cache-Control': tracks.length > 0 ? 'public, max-age=3600' : 'no-store',
     }
   );
 }
@@ -400,10 +638,12 @@ async function fetchDeezerGlobalChart(limit = 28): Promise<UnifiedTrack[]> {
       const rawCover = item.album?.cover_big || item.album?.cover_xl || item.album?.cover_medium || '';
       const rawPreview = item.preview || null;
       const ms = (Number(item.duration) || 210) * 1000;
+      const title = item.title!.trim();
+      const artist = item.artist!.name!.trim();
       return {
         id: `deezer-chart-${item.id}`,
-        title: item.title!.trim(),
-        artist: item.artist!.name!.trim(),
+        title,
+        artist,
         album: (item.album?.title || 'Global Chart').trim(),
         duration: formatDurationMs(ms),
         durationMs: ms,
@@ -413,21 +653,22 @@ async function fetchDeezerGlobalChart(limit = 28): Promise<UnifiedTrack[]> {
         rawPreviewUrl: rawPreview,
         source: 'deezer' as const,
         externalUrl: item.link,
+        externalLinks: buildExternalMusicLinks(title, artist),
       };
     });
 }
 
 const DISCOVER_SEEDS: Record<
   string,
-  Array<{ q: string; dz?: string; country: 'CN' | 'TW' | 'US' }>
+  Array<{ q: string; dz?: string; country: 'CN' | 'TW' | 'HK' | 'SG' | 'US' }>
 > = {
   hot_cn: [
-    { q: '孫燕姿', dz: 'Stefanie Sun', country: 'TW' },
+    { q: '孫燕姿', dz: 'Stefanie Sun', country: 'SG' },
     { q: '周杰倫', dz: 'Jay Chou', country: 'TW' },
-    { q: '陳奕迅', dz: 'Eason Chan', country: 'TW' },
+    { q: '陳奕迅', dz: 'Eason Chan', country: 'HK' },
     { q: '林俊傑', dz: 'JJ Lin', country: 'TW' },
-    { q: '鄧紫棋', dz: 'G.E.M.', country: 'TW' },
-    { q: '王菲', dz: 'Faye Wong', country: 'TW' },
+    { q: '鄧紫棋', dz: 'G.E.M.', country: 'HK' },
+    { q: '王菲', dz: 'Faye Wong', country: 'HK' },
   ],
   pop_west: [
     { q: 'Taylor Swift', dz: 'Taylor Swift', country: 'US' },
@@ -445,7 +686,7 @@ const DISCOVER_SEEDS: Record<
     { q: '房東的貓', dz: '房东的猫', country: 'CN' },
   ],
   rnb_jazz: [
-    { q: '方大同', dz: 'Khalil Fong', country: 'TW' },
+    { q: '方大同', dz: 'Khalil Fong', country: 'HK' },
     { q: '陶喆', dz: 'David Tao', country: 'TW' },
     { q: 'Bill Evans', dz: 'Bill Evans', country: 'US' },
     { q: 'Laufey', dz: 'Laufey', country: 'US' },
@@ -459,15 +700,15 @@ const DISCOVER_SEEDS: Record<
     { q: 'Fujii Kaze', dz: 'Fujii Kaze', country: 'US' },
   ],
   cantopop: [
-    { q: '張國榮', dz: 'Leslie Cheung', country: 'TW' },
-    { q: '王菲', dz: 'Faye Wong', country: 'TW' },
-    { q: 'Beyond', dz: 'Beyond', country: 'TW' },
-    { q: '楊千嬅', dz: 'Miriam Yeung', country: 'TW' },
-    { q: '林憶蓮', dz: 'Sandy Lam', country: 'TW' },
+    { q: '張國榮', dz: 'Leslie Cheung', country: 'HK' },
+    { q: '王菲', dz: 'Faye Wong', country: 'HK' },
+    { q: 'Beyond', dz: 'Beyond', country: 'HK' },
+    { q: '楊千嬅', dz: 'Miriam Yeung', country: 'HK' },
+    { q: '林憶蓮', dz: 'Sandy Lam', country: 'HK' },
   ],
 };
 
-async function handleDiscover(url: URL): Promise<Response> {
+async function handleDiscover(url: URL, env?: MusicApiEnv): Promise<Response> {
   const category = (url.searchParams.get('category') || 'hot_cn').trim();
 
   if (category === 'hot_global') {
@@ -484,19 +725,25 @@ async function handleDiscover(url: URL): Promise<Response> {
   }
 
   const seeds = DISCOVER_SEEDS[category] || DISCOVER_SEEDS.hot_cn;
+  const appleToken = env?.APPLE_MUSIC_TOKEN;
 
-  // Use Deezer first (never rate-limited on Workers) + iTunes TW/US in parallel for maximum resilience!
   const batches = await Promise.all(
     seeds.map(async (s) => {
       const [dz, it] = await Promise.all([
         s.dz ? searchDeezer(s.dz, 6) : Promise.resolve([]),
-        searchItunes(s.q, s.country, 5),
+        appleToken
+          ? searchAppleMusicOfficial(
+              s.q,
+              s.country.toLowerCase() as 'cn' | 'tw' | 'hk' | 'sg' | 'us',
+              appleToken,
+              5
+            )
+          : searchItunes(s.q, s.country, 5),
       ]);
       return mergeAndDedupeTracks([it, dz]).slice(0, 6);
     })
   );
 
-  // Round-robin interleave so user sees diverse artists right from track #1!
   const interleaved: UnifiedTrack[] = [];
   const maxLen = Math.max(...batches.map((b) => b.length), 0);
   for (let i = 0; i < maxLen; i++) {
@@ -552,12 +799,10 @@ async function handleLyrics(url: URL): Promise<Response> {
 
   let lines: string[] = [];
 
-  // 1. Direct NetEase Lyric API if ID is known
   if (neteaseId) {
     lines = await fetchNeteaseLyricsById(neteaseId);
   }
 
-  // 2. LRCLIB (worldwide synced/plain lyrics)
   if (lines.length === 0 && title) {
     interface LrcLibItem {
       syncedLyrics?: string | null;
@@ -581,7 +826,6 @@ async function handleLyrics(url: URL): Promise<Response> {
     lines = parseLyricLines(record?.syncedLyrics, record?.plainLyrics);
   }
 
-  // 3. Fallback: Search NetEase by title+artist to get Chinese lyrics
   if (lines.length === 0 && title) {
     const neHits = await searchNetease(`${artist} ${title}`.trim(), 3);
     const firstId = neHits[0]?.neteaseId;
@@ -629,6 +873,9 @@ async function handleProxy(request: Request, url: URL): Promise<Response> {
   const upstreamHeaders = new Headers({
     'User-Agent': 'Mozilla/5.0 (compatible; SonicArchive/2.0)',
   });
+  if (targetUrl.hostname.endsWith('.gtimg.cn')) {
+    upstreamHeaders.set('Referer', 'https://y.qq.com/');
+  }
   const rangeHeader = request.headers.get('range');
   if (rangeHeader) {
     upstreamHeaders.set('range', rangeHeader);
@@ -665,7 +912,10 @@ async function handleProxy(request: Request, url: URL): Promise<Response> {
   }
 }
 
-export async function handleMusicApiRequest(request: Request): Promise<Response | null> {
+export async function handleMusicApiRequest(
+  request: Request,
+  env?: MusicApiEnv
+): Promise<Response | null> {
   const url = new URL(request.url);
   if (!url.pathname.startsWith('/api/')) return null;
 
@@ -674,7 +924,7 @@ export async function handleMusicApiRequest(request: Request): Promise<Response 
       status: 204,
       headers: {
         'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, POST, HEAD, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Range',
       },
     });
@@ -684,17 +934,34 @@ export async function handleMusicApiRequest(request: Request): Promise<Response 
     return jsonResponse({
       ok: true,
       service: 'sonic-archive-edge',
-      sources: ['itunes-tw', 'itunes-cn', 'itunes-us', 'deezer', 'netease', 'lrclib'],
-      features: ['s2t-alias-expansion', 'edge-cache', 'client-jsonp-hybrid'],
+      sources: [
+        ...(env?.APPLE_MUSIC_TOKEN ? ['apple-music-official'] : []),
+        'itunes-tw',
+        'itunes-hk',
+        'itunes-sg',
+        'itunes-cn',
+        'itunes-us',
+        'deezer',
+        'netease',
+        'qq',
+        'lrclib',
+      ],
+      capabilities: {
+        appleMusicOfficial: Boolean(env?.APPLE_MUSIC_TOKEN),
+        acrCloudRecognize: Boolean(env?.ACR_HOST && env?.ACR_ACCESS_KEY && env?.ACR_ACCESS_SECRET),
+        auddRecognize: Boolean(env?.AUDD_API_TOKEN),
+        aiVoiceCompose: Boolean(env?.MINIMAX_API_KEY),
+        aiVoiceCloneGpu: Boolean(env?.VOICE_CLONE_ENDPOINT),
+      },
     });
   }
 
   if (url.pathname === '/api/search') {
-    return handleSearch(url);
+    return handleSearch(url, env);
   }
 
   if (url.pathname === '/api/discover') {
-    return handleDiscover(url);
+    return handleDiscover(url, env);
   }
 
   if (url.pathname === '/api/lyrics') {
@@ -705,5 +972,5 @@ export async function handleMusicApiRequest(request: Request): Promise<Response 
     return handleProxy(request, url);
   }
 
-  return jsonResponse({ error: 'Not Found' }, 404);
+  return null;
 }

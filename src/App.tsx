@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Disc3, Library, Moon, Radio, SlidersHorizontal, Sun } from 'lucide-react';
+import { Disc3, Library, Mic, Moon, Radio, SlidersHorizontal, Sun, Wand2 } from 'lucide-react';
 import type {
   AppTab,
   DraftItem,
@@ -29,6 +29,8 @@ import { LibraryView } from './components/LibraryView';
 import { PublishModal } from './components/PublishModal';
 import { ShareModal } from './components/ShareModal';
 import { SharedLandingView } from './components/SharedLandingView';
+import { RecognizeModal } from './components/RecognizeModal';
+import { AiVoiceStudioModal } from './components/AiVoiceStudioModal';
 
 const DEFAULT_CONFIG: PosterConfig = {
   mode: 'dynamic',
@@ -65,6 +67,8 @@ export default function App() {
     open: false,
     previewUrl: null,
   });
+  const [recognizeOpen, setRecognizeOpen] = useState(false);
+  const [aiVoiceOpen, setAiVoiceOpen] = useState(false);
   const [shareModal, setShareModal] = useState<{
     open: boolean;
     previewImgUrl: string | null;
@@ -364,8 +368,28 @@ export default function App() {
             })}
           </nav>
 
-          {/* Right Controls: Dual-Theme Switcher + Profile */}
-          <div className="flex items-center gap-2.5 shrink-0">
+          {/* Right Controls: Recognize + AI Voice + Dual-Theme Switcher + Profile */}
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setRecognizeOpen(true)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border border-[var(--line-subtle)] bg-[var(--bg-panel)] hover:border-[var(--accent-border)] text-[11px] font-medium text-[var(--ink-primary)] transition"
+              title="听歌识曲（类 Shazam）"
+            >
+              <Mic className="w-3.5 h-3.5 text-[var(--accent)]" />
+              <span className="hidden lg:inline">识曲</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setAiVoiceOpen(true)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border border-[var(--accent-border)] bg-[var(--accent-soft)] hover:bg-[var(--accent)] hover:text-[var(--accent-ink)] text-[11px] font-medium text-[var(--accent)] transition"
+              title="AI 声纹克隆 · 30秒专属演唱"
+            >
+              <Wand2 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">AI 声纹</span>
+            </button>
+
             {/* Tactile Morning Sun / Dark Vinyl Switcher */}
             <div
               className="inline-flex items-center p-0.5 rounded-full hi-fi-inset"
@@ -438,6 +462,8 @@ export default function App() {
               setShareModal({ open: true, previewImgUrl: pngUrl, videoBlobUrl: videoUrl || null })
             }
             onOpenPublish={(pngUrl) => setPublishModal({ open: true, previewUrl: pngUrl })}
+            onOpenRecognize={() => setRecognizeOpen(true)}
+            onOpenAiVoice={() => setAiVoiceOpen(true)}
             onSaveDraft={handleSaveDraft}
             showToast={showToast}
           />
@@ -551,6 +577,34 @@ export default function App() {
             authorName: profile.name,
             caption: config.lyric || `分享一张《${selectedSong.title}》给你`,
           });
+        }}
+        showToast={showToast}
+      />
+
+      <RecognizeModal
+        open={recognizeOpen}
+        onClose={() => setRecognizeOpen(false)}
+        onApplySong={(recognized) => {
+          setSongs((prev) => [recognized, ...prev.filter((s) => s.id !== recognized.id)]);
+          handleSelectSong(recognized);
+          setActiveTab('studio');
+          showToast(`已载入识别曲目《${recognized.title}》，可直接做海报或听原曲`);
+        }}
+        showToast={showToast}
+      />
+
+      <AiVoiceStudioModal
+        open={aiVoiceOpen}
+        authorName={profile.name}
+        onClose={() => setAiVoiceOpen(false)}
+        onApplyAiSong={(aiSong, aiLyric) => {
+          setSongs((prev) => [aiSong, ...prev.filter((s) => s.id !== aiSong.id)]);
+          handleSelectSong(aiSong);
+          if (aiLyric) {
+            handleUpdateConfig({ lyric: aiLyric, showLyric: true });
+          }
+          setActiveTab('studio');
+          showToast(`已载入你的 30 秒专属声纹单曲《${aiSong.title}》`);
         }}
         showToast={showToast}
       />

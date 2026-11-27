@@ -7,9 +7,12 @@ import {
   Disc3,
   Download,
   Edit3,
+  ExternalLink,
   Film,
   FileText,
+  Headphones,
   Loader2,
+  Mic,
   Music2,
   Pause,
   Play,
@@ -22,6 +25,7 @@ import {
   SlidersHorizontal,
   Type,
   Upload,
+  Wand2,
   X,
 } from 'lucide-react';
 import type { FontStyleId, Palette, PaletteKey, PosterConfig, RatioId, Song, TemplateId } from '../types';
@@ -38,6 +42,7 @@ import { exportPosterPng, recordDynamicVideoWithAudio } from '../utils/exporter'
 import { buildShareUrl } from '../utils/share';
 import {
   discoverMusicCategory,
+  ensureExternalLinks,
   fetchSongLyrics,
   searchUniversalMusic,
   type DiscoverCategoryId,
@@ -58,6 +63,8 @@ interface StudioViewProps {
   onToggleAudio: () => void;
   onOpenShare: (pngUrl: string | null, videoUrl?: string | null) => void;
   onOpenPublish: (pngUrl: string | null) => void;
+  onOpenRecognize: () => void;
+  onOpenAiVoice: () => void;
   onSaveDraft: (pngUrl: string | null) => void;
   showToast: (msg: string) => void;
 }
@@ -87,10 +94,13 @@ const DISCOVER_CHANNELS: Array<{ id: DiscoverCategoryId; label: string }> = [
 
 const SOURCE_LABELS: Record<NonNullable<Song['source']>, string> = {
   itunes: 'Apple',
+  'apple-music': 'Apple官方',
   deezer: 'Deezer',
   netease: '网易云',
+  qq: 'QQ音乐',
   curated: '馆藏',
   local: '本地',
+  'ai-voice': 'AI声纹',
 };
 
 type ControlSubTab = 'style' | 'music' | 'details';
@@ -110,6 +120,8 @@ export const StudioView: React.FC<StudioViewProps> = ({
   onToggleAudio,
   onOpenShare,
   onOpenPublish,
+  onOpenRecognize,
+  onOpenAiVoice,
   onSaveDraft,
   showToast,
 }) => {
@@ -817,6 +829,26 @@ export const StudioView: React.FC<StudioViewProps> = ({
               </button>
             </form>
 
+            {/* Quick Triggers: Song Recognition & AI Voice 30s Original */}
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={onOpenRecognize}
+                className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-[var(--bg-inset)] hover:bg-[var(--bg-hover)] border border-[var(--line-subtle)] hover:border-[var(--accent-border)] text-xs font-medium text-[var(--ink-primary)] transition"
+              >
+                <Mic className="w-3.5 h-3.5 text-[var(--accent)]" />
+                <span>听歌识曲</span>
+              </button>
+              <button
+                type="button"
+                onClick={onOpenAiVoice}
+                className="flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl bg-[var(--accent-soft)] hover:bg-[var(--accent)] hover:text-[var(--accent-ink)] border border-[var(--accent-border)] text-xs font-medium text-[var(--accent)] transition"
+              >
+                <Wand2 className="w-3.5 h-3.5" />
+                <span>AI 声纹 30s 演唱</span>
+              </button>
+            </div>
+
             {/* 7 Live Discovery Channels */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
@@ -943,6 +975,40 @@ export const StudioView: React.FC<StudioViewProps> = ({
                 </>
               )}
             </div>
+
+            {/* External Full-Song Links for Current Track */}
+            {!song.isAiOriginal && (
+              <div className="space-y-1.5 pt-3 border-t border-[var(--line-subtle)]">
+                <div className="flex items-center justify-between text-[11px] text-[var(--ink-muted)]">
+                  <span className="flex items-center gap-1.5 font-medium text-[var(--ink-secondary)]">
+                    <Headphones className="w-3.5 h-3.5 text-[var(--accent)]" />
+                    去外部音乐平台听《{song.title}》完整版
+                  </span>
+                </div>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {(() => {
+                    const ext = ensureExternalLinks(song);
+                    return [
+                      { label: '网易云', href: ext.netease },
+                      { label: 'QQ音乐', href: ext.qq },
+                      { label: 'Apple', href: ext.apple },
+                      { label: 'Spotify', href: ext.spotify },
+                    ].map((link) => (
+                      <a
+                        key={link.label}
+                        href={link.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center justify-center gap-1 py-1.5 px-1.5 rounded-lg bg-[var(--bg-inset)] hover:bg-[var(--bg-hover)] border border-[var(--line-subtle)] text-[11px] text-[var(--ink-primary)] transition"
+                      >
+                        <span className="truncate">{link.label}</span>
+                        <ExternalLink className="w-2.5 h-2.5 text-[var(--ink-muted)] shrink-0" />
+                      </a>
+                    ));
+                  })()}
+                </div>
+              </div>
+            )}
 
             {/* Local Import */}
             <div className="grid grid-cols-2 gap-2.5 pt-3 border-t border-[var(--line-subtle)]">

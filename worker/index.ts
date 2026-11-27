@@ -1,10 +1,10 @@
-import { handleMusicApiRequest } from '../shared/musicApi';
+import { handleAllApiRequests, type MusicApiEnv } from '../shared/apiRouter';
 
 interface AssetsBinding {
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
 }
 
-interface Env {
+interface Env extends MusicApiEnv {
   ASSETS: AssetsBinding;
 }
 
@@ -34,7 +34,7 @@ export default {
       }
     }
 
-    const apiResponse = await handleMusicApiRequest(request);
+    const apiResponse = await handleAllApiRequests(request, env);
     if (apiResponse) {
       const cacheControl = apiResponse.headers.get('Cache-Control') || '';
       if (shouldCache && cfCache && apiResponse.status === 200 && !cacheControl.includes('no-store')) {

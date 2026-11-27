@@ -1,9 +1,11 @@
 import type { Song } from '../types';
 import { CURATED_SONGS } from '../data/curated';
 import {
+  buildExternalMusicLinks,
   canonicalTrackKey,
   expandMusicQuery,
   toTraditionalChinese,
+  type ExternalMusicLinks,
 } from '../../shared/musicAliases';
 
 export type DiscoverCategoryId =
@@ -37,9 +39,11 @@ interface ApiTrackItem {
   duration: string;
   cover: string;
   previewUrl: string | null;
-  source: 'itunes' | 'deezer' | 'netease';
+  source: 'itunes' | 'apple-music' | 'deezer' | 'netease' | 'qq';
   externalUrl?: string;
+  externalLinks?: ExternalMusicLinks;
   neteaseId?: string;
+  qqMid?: string;
 }
 
 interface ItunesJsonpItem {
@@ -93,6 +97,24 @@ function proxyMediaUrl(rawUrl: string): string {
   return httpsUrl;
 }
 
+export function ensureExternalLinks(song: Song): ExternalMusicLinks {
+  if (song.externalLinks?.netease && song.externalLinks?.qq && song.externalLinks?.apple) {
+    return {
+      netease: song.externalLinks.netease,
+      qq: song.externalLinks.qq,
+      apple: song.externalLinks.apple,
+      spotify:
+        song.externalLinks.spotify ||
+        buildExternalMusicLinks(song.title, song.artist).spotify,
+    };
+  }
+  return buildExternalMusicLinks(song.title, song.artist, {
+    neteaseId: song.neteaseId,
+    qqMid: song.qqMid,
+    appleUrl: song.externalUrl,
+  });
+}
+
 function mapApiTrackToSong(r: ApiTrackItem): Song {
   return {
     id: r.id,
@@ -106,19 +128,27 @@ function mapApiTrackToSong(r: ApiTrackItem): Song {
     previewUrl: r.previewUrl,
     chordFreqs: [220, 277.18, 329.63, 440],
     externalUrl: r.externalUrl,
+    externalLinks:
+      r.externalLinks ||
+      buildExternalMusicLinks(r.title, r.artist, {
+        neteaseId: r.neteaseId,
+        qqMid: r.qqMid,
+        appleUrl: r.externalUrl,
+      }),
     source: r.source,
     neteaseId: r.neteaseId,
+    qqMid: r.qqMid,
   };
 }
 
 /**
  * Browser-side JSONP query to Apple iTunes Search API.
- * Runs directly from the user's own residential IP (never hits Cloudflare Workers shared-IP 20 req/min limit)
- * AND bypasses browser CORS restrictions completely via official iTunes JSONP callback!
+ * Runs directly from user's own residential IP (immune to Cloudflare shared-IP 20 req/min limit)
+ * AND bypasses browser CORS restrictions completely via official iTunes JSONP callback.
  */
 function fetchItunesJsonp(
   term: string,
-  country: 'TW' | 'CN' | 'HK' | 'US',
+  country: 'TW' | 'HK' | 'SG' | 'CN' | 'US',
   limit = 22,
   offset = 0
 ): Promise<Song[]> {
@@ -150,7 +180,7 @@ function fetchItunesJsonp(
       resolve(songs);
     };
 
-    const timer = window.setTimeout(() => finish([]), 6000);
+    const timer = window.setTimeout(() => finish([]), 6500);
 
     win[cbName] = (payload: { results?: ItunesJsonpItem[] }) => {
       const items = Array.isArray(payload?.results) ? payload.results : [];
@@ -160,10 +190,11 @@ function fetchItunesJsonp(
           const rawArt = String(item.artworkUrl100 || '').replace(/100x100bb/i, '600x600bb');
           const rawPreview = item.previewUrl ? String(item.previewUrl) : null;
           const trackName = String(item.trackName).trim();
+          const artistName = String(item.artistName).trim();
           return {
             id: `itunes-${country.toLowerCase()}-${String(item.trackId ?? Math.random().toString(36).slice(2))}`,
             title: trackName,
-            artist: String(item.artistName).trim(),
+            artist: artistName,
             album: String(item.collectionName || '单曲').trim(),
             duration: formatDurationMs(Number(item.trackTimeMillis)),
             cover: proxyMediaUrl(rawArt),
@@ -172,6 +203,9 @@ function fetchItunesJsonp(
             previewUrl: rawPreview ? proxyMediaUrl(rawPreview) : null,
             chordFreqs: [220, 277.18, 329.63, 440],
             externalUrl: item.trackViewUrl,
+            externalLinks: buildExternalMusicLinks(trackName, artistName, {
+              appleUrl: item.trackViewUrl,
+            }),
             source: 'itunes' as const,
           };
         });
@@ -188,7 +222,7 @@ function fetchItunesJsonp(
 }
 
 function scoreSongRelevance(song: Song, queryTerms: string[]): number {
-  let score = song.previewUrl ? 30 : 0;
+  let score = song.previewUrl ? 40 : 0;
   if (!queryTerms.length) return score;
 
   const titleNorm = toTraditionalChinese(song.title).toLowerCase();
@@ -198,18 +232,18 @@ function scoreSongRelevance(song: Song, queryTerms: string[]): number {
   for (const term of queryTerms) {
     const t = toTraditionalChinese(term).toLowerCase().trim();
     if (!t) continue;
-    if (titleNorm === t) score += 60;
-    else if (artistNorm === t) score += 50;
-    else if (titleNorm.includes(t)) score += 35;
-    else if (artistNorm.includes(t)) score += 30;
+    if (titleNorm === t) score += 70;
+    else if (artistNorm === t) score += 55;
+    else if (titleNorm.includes(t)) score += 38;
+    else if (artistNorm.includes(t)) score += 32;
     else {
       const parts = t.split(/\s+/).filter(Boolean);
       let hits = 0;
       for (const p of parts) {
         if (combined.includes(p)) hits++;
       }
-      if (parts.length > 0 && hits === parts.length) score += 45;
-      else score += hits * 15;
+      if (parts.length > 0 && hits === parts.length) score += 55;
+      else score += hits * 16;
     }
   }
   return score;
@@ -225,7 +259,7 @@ function mergeSongs(lists: Song[][], queryTerms: string[] = []): Song[] {
       const key = canonicalTrackKey(s.title, s.artist);
       const existing = byKey.get(key);
       if (!existing) {
-        byKey.set(key, { ...s });
+        byKey.set(key, { ...s, externalLinks: ensureExternalLinks(s) });
         order.push(key);
       } else {
         if (!existing.previewUrl && s.previewUrl) {
@@ -233,6 +267,11 @@ function mergeSongs(lists: Song[][], queryTerms: string[] = []): Song[] {
         }
         if (!existing.neteaseId && s.neteaseId) {
           existing.neteaseId = s.neteaseId;
+          existing.externalLinks = ensureExternalLinks({ ...existing, neteaseId: s.neteaseId });
+        }
+        if (!existing.qqMid && s.qqMid) {
+          existing.qqMid = s.qqMid;
+          existing.externalLinks = ensureExternalLinks({ ...existing, qqMid: s.qqMid });
         }
       }
     }
@@ -249,15 +288,15 @@ function mergeSongs(lists: Song[][], queryTerms: string[] = []): Song[] {
 
 const CLIENT_DISCOVER_SEEDS: Record<
   Exclude<DiscoverCategoryId, 'curated'>,
-  Array<{ q: string; country: 'TW' | 'CN' | 'US' }>
+  Array<{ q: string; country: 'TW' | 'HK' | 'SG' | 'CN' | 'US' }>
 > = {
   hot_cn: [
-    { q: '孫燕姿', country: 'TW' },
+    { q: '孫燕姿', country: 'SG' },
     { q: '周杰倫', country: 'TW' },
-    { q: '陳奕迅', country: 'TW' },
+    { q: '陳奕迅', country: 'HK' },
     { q: '林俊傑', country: 'TW' },
-    { q: '鄧紫棋', country: 'TW' },
-    { q: '王菲', country: 'TW' },
+    { q: '鄧紫棋', country: 'HK' },
+    { q: '王菲', country: 'HK' },
   ],
   pop_west: [
     { q: 'Taylor Swift', country: 'US' },
@@ -282,7 +321,7 @@ const CLIENT_DISCOVER_SEEDS: Record<
     { q: '房東的貓', country: 'CN' },
   ],
   rnb_jazz: [
-    { q: '方大同', country: 'TW' },
+    { q: '方大同', country: 'HK' },
     { q: '陶喆', country: 'TW' },
     { q: 'Bill Evans', country: 'US' },
     { q: 'Laufey', country: 'US' },
@@ -296,21 +335,21 @@ const CLIENT_DISCOVER_SEEDS: Record<
     { q: 'Fujii Kaze', country: 'US' },
   ],
   cantopop: [
-    { q: '張國榮', country: 'TW' },
-    { q: '王菲', country: 'TW' },
-    { q: 'Beyond', country: 'TW' },
-    { q: '楊千嬅', country: 'TW' },
-    { q: '林憶蓮', country: 'TW' },
+    { q: '張國榮', country: 'HK' },
+    { q: '王菲', country: 'HK' },
+    { q: 'Beyond', country: 'HK' },
+    { q: '楊千嬅', country: 'HK' },
+    { q: '林憶蓮', country: 'HK' },
   ],
 };
 
-/**
- * Loads live curated music charts & genre channels (up to 30 tracks per channel!)
- * via Edge API + automatic Browser JSONP fallback if Edge upstream is rate-limited.
- */
 export async function discoverMusicCategory(category: DiscoverCategoryId): Promise<Song[]> {
   if (category === 'curated') {
-    return CURATED_SONGS.map((s) => ({ ...s, source: 'curated' as const }));
+    return CURATED_SONGS.map((s) => ({
+      ...s,
+      source: 'curated' as const,
+      externalLinks: ensureExternalLinks(s),
+    }));
   }
 
   const cached = discoverCache.get(category);
@@ -332,7 +371,6 @@ export async function discoverMusicCategory(category: DiscoverCategoryId): Promi
     return edgeSongs;
   }
 
-  // Fallback / supplement with Browser JSONP directly from user's residential IP
   const seeds = CLIENT_DISCOVER_SEEDS[category] || CLIENT_DISCOVER_SEEDS.hot_cn;
   const batches = await Promise.all(seeds.map((s) => fetchItunesJsonp(s.q, s.country, 6, 0)));
   const interleaved: Song[] = [];
@@ -349,15 +387,13 @@ export async function discoverMusicCategory(category: DiscoverCategoryId): Promi
     return merged;
   }
 
-  return CURATED_SONGS.map((s) => ({ ...s, source: 'curated' as const }));
+  return CURATED_SONGS.map((s) => ({
+    ...s,
+    source: 'curated' as const,
+    externalLinks: ensureExternalLinks(s),
+  }));
 }
 
-/**
- * Hybrid Universal Music Search:
- * Runs Cloudflare Edge API (Deezer + Multi-Region Apple + NetEase + Edge Cache)
- * IN PARALLEL with Browser-Side iTunes JSONP (Simplified -> Traditional + English Alias expanded,
- * running from user's own IP so Apple NEVER rate-limits!).
- */
 export async function searchUniversalMusic(
   rawQuery: string,
   offset = 0
@@ -366,25 +402,31 @@ export async function searchUniversalMusic(
   if (!cleaned) {
     return {
       cleanedQuery: '',
-      songs: CURATED_SONGS.slice(),
+      songs: CURATED_SONGS.map((s) => ({ ...s, externalLinks: ensureExternalLinks(s) })),
       hasMore: false,
       mode: 'local-only',
     };
   }
 
   const expanded = expandMusicQuery(cleaned);
-  const queryTerms = [expanded.primary, expanded.traditional, expanded.englishAlias || ''].filter(
-    Boolean
-  );
+  const queryTerms = [
+    expanded.primary,
+    expanded.traditional,
+    expanded.songHintTrad || '',
+    expanded.englishAlias || '',
+  ].filter(Boolean);
 
   const localMatches =
     offset === 0
       ? CURATED_SONGS.filter((s) =>
           `${s.title} ${s.artist} ${s.album}`.toLowerCase().includes(cleaned.toLowerCase())
-        ).map((s) => ({ ...s, source: 'curated' as const }))
+        ).map((s) => ({
+          ...s,
+          source: 'curated' as const,
+          externalLinks: ensureExternalLinks(s),
+        }))
       : [];
 
-  // 1. Edge API request
   const edgePromise = (async (): Promise<{
     cleanedQuery: string;
     songs: Song[];
@@ -412,11 +454,15 @@ export async function searchUniversalMusic(
     return { cleanedQuery: cleaned, songs: [], hasMore: false };
   })();
 
-  // 2. Browser JSONP iTunes search (zero shared-IP rate limits, full Mandopop TW/CN + Western US coverage!)
   const jsonpTasks: Array<Promise<Song[]>> = [];
   if (expanded.isCjk) {
-    jsonpTasks.push(fetchItunesJsonp(expanded.traditional, 'TW', 22, offset));
-    jsonpTasks.push(fetchItunesJsonp(expanded.primary, 'CN', 16, offset));
+    if (expanded.songHintTrad) {
+      jsonpTasks.push(fetchItunesJsonp(expanded.songHintTrad, 'TW', 16, offset));
+      jsonpTasks.push(fetchItunesJsonp(expanded.songHintTrad, 'SG', 12, offset));
+    }
+    jsonpTasks.push(fetchItunesJsonp(expanded.traditional, 'TW', 20, offset));
+    jsonpTasks.push(fetchItunesJsonp(expanded.traditional, 'HK', 16, offset));
+    jsonpTasks.push(fetchItunesJsonp(expanded.primary, 'CN', 14, offset));
     if (expanded.englishAlias) {
       jsonpTasks.push(fetchItunesJsonp(expanded.englishAlias, 'US', 12, offset));
     }
@@ -446,15 +492,15 @@ export async function searchUniversalMusic(
 
   return {
     cleanedQuery: cleaned,
-    songs: localMatches.length > 0 ? localMatches : CURATED_SONGS.slice(),
+    songs:
+      localMatches.length > 0
+        ? localMatches
+        : CURATED_SONGS.map((s) => ({ ...s, externalLinks: ensureExternalLinks(s) })),
     hasMore: false,
     mode: 'local-only',
   };
 }
 
-/**
- * Fetches real song lyrics via /api/lyrics (NetEase Chinese Lyrics + LRCLIB) with in-memory cache.
- */
 export async function fetchSongLyrics(
   title: string,
   artist: string,

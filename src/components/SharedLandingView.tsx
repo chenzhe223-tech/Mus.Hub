@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Copy, Heart, Pause, Play, Share2 } from 'lucide-react';
+import { ArrowLeft, Copy, ExternalLink, Headphones, Heart, Pause, Play, Share2 } from 'lucide-react';
 import type { Palette, PosterConfig, Song } from '../types';
 import { PosterCanvas } from './PosterCanvas';
 import { withAlpha } from '../utils/color';
 import { buildShareUrl, copyToClipboard } from '../utils/share';
+import { ensureExternalLinks } from '../utils/musicSearch';
 
 interface SharedLandingViewProps {
   song: Song;
@@ -131,6 +132,38 @@ export const SharedLandingView: React.FC<SharedLandingViewProps> = ({
             制作同款海报
           </button>
         </div>
+
+        {/* External Full-Song Links */}
+        {!song.isAiOriginal && (
+          <div className="w-full hi-fi-panel rounded-xl p-3.5 space-y-2">
+            <div className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--ink-secondary)]">
+              <Headphones className="w-3.5 h-3.5 text-[var(--accent)]" />
+              <span>跳转到外部音乐平台继续听《{song.title}》完整版</span>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {(() => {
+                const ext = ensureExternalLinks(song);
+                return [
+                  { label: '网易云音乐', href: ext.netease },
+                  { label: 'QQ 音乐', href: ext.qq },
+                  { label: 'Apple Music', href: ext.apple },
+                  { label: 'Spotify', href: ext.spotify },
+                ].map((item) => (
+                  <a
+                    key={item.label}
+                    href={item.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-between px-3 py-2 rounded-lg bg-[var(--bg-inset)] hover:bg-[var(--bg-hover)] border border-[var(--line-subtle)] text-xs text-[var(--ink-primary)] transition"
+                  >
+                    <span>{item.label}</span>
+                    <ExternalLink className="w-3 h-3 text-[var(--ink-muted)]" />
+                  </a>
+                ));
+              })()}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

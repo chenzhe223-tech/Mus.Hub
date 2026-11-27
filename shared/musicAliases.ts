@@ -1,17 +1,14 @@
 /**
  * Shared Simplified -> Traditional Chinese converter + Mandopop / Cantopop / Western Pop / J-Pop
- * bilingual artist alias table used by BOTH Cloudflare Edge Worker and Browser Client.
+ * bilingual artist alias table + Iconic Mandopop Song Title Hints + External Music Deep Links.
  *
- * Why this matters:
- * - Apple Music TW/HK/SG/US catalogs iconic Mandopop & Cantopop artists under Traditional Chinese
- *   (e.g., 孫燕姿, 周杰倫, 陳奕迅, 林俊傑, 鄧紫棋, 張學友, 梁靜茹, 蔡依林, 張國榮) and/or English names.
- * - Deezer indexes almost all Mandopop & Western Pop under English/romanized names (e.g., Stefanie Sun,
- *   Jay Chou, Eason Chan, JJ Lin, Taylor Swift, The Weeknd).
- * - Neither API auto-converts Simplified Chinese queries, causing empty results unless expanded.
+ * Used by BOTH Cloudflare Edge Worker and Browser Client so searching bare titles like
+ * "逆光", "天黑黑", "开始懂了", "我怀念的", "晴天", "十年", or nicknames like "霉霉"
+ * immediately hits full HK/TW/SG/CN/US/Global catalogs with 30s studio previews.
  */
 
 const S2T_PAIRS =
-  '孙孫伦倫杰傑张張陈陳刘劉杨楊赵趙吴吳郑鄭冯馮许許吕呂严嚴华華谢謝邹鄒窦竇苏蘇卢盧马馬凤鳳鲍鮑费費薛薛贺賀汤湯罗羅毕畢邬鄔萧蕭谈談庞龐纪紀项項蓝藍闵閔强強贾賈娄婁颜顏钟鍾万萬经經应應邓鄧单單诸諸钮鈕龚龔陆陸荣榮储儲乌烏车車宁寧栾欒厉厲叶葉蓟薊怀懷从從赖賴蔺藺乔喬阴陰苍蒼双雙闻聞党黨谭譚贡貢劳勞郦酈却卻寿壽边邊农農温溫别別庄莊阎閻连連习習鱼魚终終满滿国國广廣禄祿阙闕东東欧歐师師巩鞏聂聶阚闞简簡饶饒养養丰豐关關权權盖蓋绮綺贞貞莹瑩玮瑋涵涵轩軒谦謙亿億忆憶莲蓮桦樺丽麗仪儀凯凱伟偉欢歡乐樂恋戀伤傷泪淚痛痛独獨寂寂孤孤拥擁离離归歸约約续續结結线線绕繞绘繪绝絕缘緣编編缓緩纵縱细細给給维維绵綿绿綠绚絢绽綻绯緋织織纯純纸紙级級纷紛纺紡纳納纽紐纬緯练練组組绅紳绊絆绍紹驿驛绑綁绒絨娇嬌娆嬈娱娛娴嫻婵嬋婴嬰实實宠寵审審宝寶宽寬宾賓寻尋导導尽盡层層届屆属屬岁歲岂豈岗崗岛島岭嶺屿嶼峡峽巅巔币幣帅帥帐帳帘簾帜幟带帶帮幫庆慶庙廟废廢异異弃棄弹彈弥彌弯彎当當录錄彻徹径徑忧憂态態怅悵怜憐总總恳懇恶惡恼惱悬懸悯憫惊驚惧懼惨慘惯慣愤憤愿願懒懶戏戲战戰户戶扑撲执執扩擴扫掃扬揚扰擾抚撫抛拋抢搶护護报報担擔拟擬拨撥择擇挂掛挚摯挡擋挣掙挤擠挥揮捞撈损損捡撿换換捣搗据據摇搖撑撐攒攢敌敵敛斂数數斋齋断斷无無旧舊时時旷曠晓曉晕暈暂暫书書会會胧朧术術机機杀殺杂雜条條来來极極构構枪槍枫楓标標栈棧栋棟栏欄树樹栖棲样樣桥橋梦夢检檢樱櫻叹嘆历歷残殘殇殤气氣氢氫汇匯汉漢汹洶沧滄沪滬泽澤洁潔洒灑浅淺浇澆浊濁测測济濟浏瀏浑渾浓濃涂塗涌湧涛濤涟漣涡渦焕煥涤滌润潤涨漲涩澀渊淵渐漸渔漁渗滲湾灣湿濕溃潰溅濺滚滾滤濾滥濫滨濱滩灘澜瀾灭滅灯燈灵靈灾災灿燦炉爐炽熾烁爍烂爛烟煙烦煩烧燒热熱爱愛爷爺牵牽犹猶狭狹狮獅猎獵献獻兽獸环環现現琼瓊瑶瑤产產亩畝畅暢画畫叠疊疯瘋痴癡疗療发發皱皺盗盜盏盞监監盘盤众眾睁睜瞩矚矫矯矿礦码碼砖磚砚硯礼禮祸禍禅禪种種称稱稳穩穷窮窝窩窥窺竞競笔筆简簡筝箏节節篮籃篱籬粤粵紧緊繁繁纤纖纱紗纲綱纹紋络絡绞絞统統丝絲绢絹继繼绩績绪緒绰綽绳繩绷繃综綜缀綴缅緬缔締缕縷缝縫缠纏缩縮缴繳网網罚罰罢罷羁羈羡羨义義联聯聪聰声聲职職肃肅肠腸肤膚胆膽胜勝胶膠脉脈脑腦脚腳脱脫脸臉腊臘腾騰卧臥临臨兴興举舉舰艦舱艙艰艱艳艷艺藝芦蘆荐薦药藥获獲莺鶯萨薩著著蒋蔣蓝藍蔷薔蔼藹蕴蘊兰蘭虑慮虚虛虫蟲虽雖虾蝦蚁蟻蚕蠶蜡蠟蝉蟬补補衬襯袜襪袭襲装裝裤褲见見观觀规規觅覓视視览覽觉覺亲親计計订訂认認讨討让讓训訓议議讯訊记記讲講讳諱讶訝讹訛论論讽諷设設访訪诀訣证證评評诅詛识識诈詐诉訴诊診词詞诏詔译譯试試诗詩诚誠话話诞誕询詢详詳语語误誤诱誘诲誨说說请請诺諾读讀课課谁誰调調谅諒谊誼谋謀谍諜谎謊谐諧谓謂谜謎谣謠谨謹谱譜猫貓贝貝负負财財责責贤賢败敗账賬货貨质質贩販贪貪贫貧贬貶购購贯貫贱賤贴貼贵貴贷貸贸貿贼賊贿賄资資赋賦赌賭赏賞赐賜赔賠赚賺赛賽赞贊赠贈赢贏赶趕趋趨跃躍践踐踪蹤躯軀轨軌转轉轮輪软軟轰轟轻輕载載较較辅輔辆輛辈輩辉輝辑輯输輸辞辭辩辯辽遼达達迁遷过過迈邁运運还還这這进進远遠违違迟遲适適选選逊遜递遞遗遺遥遙邮郵邻鄰释釋针針钓釣钗釵钢鋼钦欽铃鈴铁鐵铂鉑钻鑽银銀铜銅铭銘铮錚铺鋪链鏈销銷锁鎖错錯锡錫锦錦键鍵锤錘镇鎮镜鏡锋鋒锐銳长長门門闪閃闭閉问問闲閒间間闷悶闹鬧阁閣阅閱阔闊闯闖阳陽阴陰阵陣阶階际際险險随隨隐隱难難雏雛雾霧韵韻响響页頁顶頂顺順须須顽頑顾顧顿頓颂頌预預领領频頻颗顆题題额額颠顛颤顫类類风風飘飄飞飛饭飯饮飲馆館驰馳驱驅驶駛驻駐驾駕骄驕验驗骏駿骑騎骚騷骤驟鲜鮮鲸鯨鸟鳥鸣鳴鸿鴻鸽鴿鹅鵝鹊鵲鹏鵬鹤鶴鹰鷹麦麥黄黃齐齊龄齡龙龍';
+  '开開关關风風云雲爱愛恋戀梦夢怀懷见見绿綠蓝藍红紅黄黃银銀金金灯燈影影画畫书書纸紙笔筆诗詩词詞声聲响響韵韻节節弹彈听聽说說语語话話谈談谁誰许許请請谢謝认認识識记記伤傷泪淚远遠过過來來时時間間们們个個为為这這么麼还還对對没沒点點边邊样樣实實现現经經欢歡乐樂离離别別归歸问問门門难難简簡单單复複杂雜极極温溫热熱阴陰雾霧叹嘆愿願寻尋遇遇错錯舍捨弃棄回回飞飛坠墜飘飄荡盪转轉变變换換旧舊长長满滿独獨双雙终終无無尽盡头頭际際东東国國镇鎮乡鄉桥橋墙牆楼樓阁閣厅廳馆館园園树樹叶葉兰蘭莲蓮樱櫻枫楓枣棗游遊戏戲剧劇场場镜鏡帧幀帘簾钟鐘表錶针針线線绳繩结結网網丝絲绸綢纱紗锦錦绣繡裙裙裤褲袜襪带帶环環链鏈钻鑽宝寶贝貝琼瓊瑶瑤玛瑪铁鐵铜銅锡錫铅鉛钢鋼锐銳锋鋒剑劍枪槍战戰斗鬥胜勝败敗输輸赢贏赛賽竞競争爭抢搶夺奪护護卫衛击擊断斷绝絕灭滅运運气氣灵靈龙龍凤鳳猫貓马馬猪豬鸡雞鸭鴨鹅鵝鸟鳥鸦鴉鹊鵲鹰鷹鹤鶴鸽鴿鸥鷗莺鶯蝶蝶蝉蟬萤螢鱼魚鲸鯨鲨鯊龟龜鳖鱉虾蝦虫蟲蚁蟻蚊蚊蝇蠅狮獅驼駝驴驢骡騾岁歲湾灣岛島屿嶼峡峽岭嶺尘塵滩灘滨濱舱艙航航车車轮輪轨軌机機亲親侣侶爷爺儿兒师師学學课課写寫读讀录錄编編辑輯译譯注註释釋证證据據论論义義觉覺绪緒态態脑腦脸臉颜顏齿齒发發须鬚颈頸脚腳体體躯軀脉脈肤膚脏臟胆膽肠腸肾腎疮瘡药藥医醫疗療愈癒强強壮壯丽麗丑醜恶惡坏壞伪偽虚虛丰豐贫貧穷窮贵貴贱賤轻輕缓緩迟遲暂暫恒恆区區层層级級阶階队隊众眾伙夥团團会會党黨帮幫军軍将將帅帥后後仆僕敌敵贼賊盗盜骗騙谎謊谜謎隐隱显顯闭閉锁鎖钥鑰条條块塊颗顆缕縷阵陣号號码碼数數唤喚咏詠应應诺諾约約凭憑赖賴托託给給赠贈递遞传傳播播拥擁搂摟搀攙挤擠压壓扫掃涤滌冲沖浇澆洒灑泼潑溅濺渗滲涌湧涨漲潜潛跃躍迈邁驰馳驱驅赶趕闪閃摇搖摆擺动動静靜睁睜赏賞览覽阅閱闻聞尝嘗饮飲孙孫伦倫杰傑张張陈陳刘劉杨楊赵趙吴吳郑鄭冯馮吕呂严嚴华華邹鄒窦竇苏蘇卢盧鲍鮑费費贺賀汤湯罗羅毕畢邬鄔萧蕭庞龐纪紀项項闵閔贾賈娄婁钟鍾万萬邓鄧诸諸钮鈕龚龔陆陸荣榮储儲乌烏宁寧栾欒厉厲蓟薊从從蔺藺乔喬苍蒼党黨谭譚贡貢劳勞郦酈却卻寿壽农農庄莊阎閻连連习習广廣禄祿阙闕欧歐巩鞏聂聶阚闞饶饒养養权權盖蓋绮綺贞貞莹瑩玮瑋轩軒谦謙亿億忆憶桦樺仪儀凯凱伟偉约約续續绕繞绘繪缘緣维維绵綿绚絢绽綻绯緋织織纯純纷紛纺紡纳納纽紐纬緯练練组組绅紳绊絆绍紹驿驛绑綁绒絨娇嬌娆嬈娱娛娴嫻婵嬋婴嬰宠寵审審宽寬宾賓导導届屆属屬岂豈岗崗巅巔币幣帐帳帜幟庆慶庙廟废廢异異弥彌弯彎当當彻徹径徑忧憂怅悵怜憐总總恳懇恼惱悬懸悯憫惊驚惧懼惨慘惯慣愤憤懒懶户戶扑撲执執扩擴扬揚扰擾抚撫抛拋报報担擔拟擬拨撥择擇挂掛挚摯挡擋挣掙挥揮捞撈损損捡撿捣搗撑撐攒攢敛斂斋齋旷曠晓曉晕暈胧朧术術杀殺构構标標栈棧栋棟栏欄栖棲检檢历歷残殘殇殤氢氫汇匯汉漢汹洶沧滄沪滬泽澤洁潔浅淺浊濁测測济濟浏瀏浑渾浓濃涂塗涛濤涟漣涡渦焕煥涤滌润潤涩澀渊淵渐漸渔漁湿濕溃潰滚滾滤濾滥濫澜瀾灾災灿燦炉爐炽熾烁爍烂爛烟煙烦煩烧燒牵牽犹猶狭狹猎獵献獻兽獸产產亩畝畅暢叠疊疯瘋痴癡皱皺盏盞监監盘盤瞩矚矫矯矿礦砖磚砚硯礼禮祸禍禅禪种種称稱稳穩窝窩窥窺筝箏篮籃篱籬粤粵紧緊繁繁纤纖纲綱纹紋络絡绞絞统統绢絹继繼绩績绰綽绷繃综綜缀綴缅緬缔締缝縫缠纏缩縮缴繳罚罰罢罷羁羈羡羨联聯聪聰职職肃肅胶膠脱脫腊臘腾騰卧臥临臨兴興举舉舰艦艰艱艳艷艺藝芦蘆荐薦获獲萨薩著著蒋蔣蔷薔蔼藹蕴蘊虑慮虽雖蚕蠶蜡蠟补補衬襯袭襲装裝观觀规規觅覓视視计計订訂讨討让讓训訓议議讯訊讲講讳諱讶訝讹訛讽諷设設访訪诀訣评評诅詛诈詐诉訴诊診诏詔试試诚誠诞誕询詢详詳误誤诱誘诲誨调調谅諒谊誼谋謀谍諜谐諧谓謂谣謠谨謹谱譜负負财財责責贤賢账賬货貨质質贩販贪貪贬貶购購贯貫贴貼贷貸贸貿贿賄资資赋賦赌賭赐賜赔賠赚賺赞贊趋趨践踐踪蹤软軟轰轟载載较較辅輔辆輛辈輩辉輝辞辭辩辯辽遼达達迁遷违違适適选選逊遜遗遺遥遙邮郵邻鄰钓釣钗釵钦欽铃鈴铂鉑铭銘铮錚铺鋪销銷错錯锦錦键鍵锤錘镇鎮闲閒闷悶闹鬧阔闊闯闖阵陣险險随隨雏雛页頁顶頂顺順顽頑顾顧顿頓颂頌预預领領频頻题題额額颠顛颤顫类類饭飯驰馳驶駛驻駐驾駕骄驕验驗骏駿骑騎骚騷骤驟鲜鮮鸣鳴鸿鴻麦麥齐齊龄齡';
 
 const S2T_MAP: Record<string, string> = {};
 for (let i = 0; i < S2T_PAIRS.length - 1; i += 2) {
@@ -27,12 +24,7 @@ export interface ArtistAliasEntry {
   en: string;
 }
 
-/**
- * Top Mandopop, Cantopop, Indie, J-Pop, K-Pop & Western Pop artist bilingual aliases.
- * Keys are lowercase Simplified Chinese or popular Chinese nicknames.
- */
 const ARTIST_ALIASES: Record<string, ArtistAliasEntry> = {
-  // Mandopop & Cantopop Classics + Modern Stars
   孙燕姿: { trad: '孫燕姿', en: 'Stefanie Sun' },
   周杰伦: { trad: '周杰倫', en: 'Jay Chou' },
   陈奕迅: { trad: '陳奕迅', en: 'Eason Chan' },
@@ -111,31 +103,19 @@ const ARTIST_ALIASES: Record<string, ArtistAliasEntry> = {
   飞儿乐团: { trad: '飛兒樂團', en: 'F.I.R.' },
   信乐团: { trad: '信樂團', en: 'Shin' },
   动力火车: { trad: '動力火車', en: 'Power Station' },
-  羽泉: { trad: '羽泉', en: 'Yu Quan' },
   凤凰传奇: { trad: '鳳凰傳奇', en: 'Phoenix Legend' },
-  刀郎: { trad: '刀郎', en: 'Dao Lang' },
   那英: { trad: '那英', en: 'Na Ying' },
   韩红: { trad: '韓紅', en: 'Han Hong' },
   孙楠: { trad: '孫楠', en: 'Sun Nan' },
   汪峰: { trad: '汪峰', en: 'Wang Feng' },
-  郑钧: { trad: '鄭鈞', en: 'Zheng Jun' },
-  窦唯: { trad: '竇唯', en: 'Dou Wei' },
-  新裤子: { trad: '新褲子', en: 'New Pants' },
-  逃跑计划: { trad: '逃跑計劃', en: 'Escape Plan' },
   陈粒: { trad: '陳粒', en: 'Chen Li' },
-
-  // J-Pop & K-Pop
   坂本龙一: { trad: '坂本龍一', en: 'Ryuichi Sakamoto' },
   久石让: { trad: '久石讓', en: 'Joe Hisaishi' },
   米津玄师: { trad: '米津玄師', en: 'Kenshi Yonezu' },
   宇多田光: { trad: '宇多田光', en: 'Hikaru Utada' },
   藤井风: { trad: '藤井風', en: 'Fujii Kaze' },
-  滨崎步: { trad: '濱崎步', en: 'Ayumi Hamasaki' },
-  中岛美雪: { trad: '中島美雪', en: 'Miyuki Nakajima' },
   防弹少年团: { trad: '防彈少年團', en: 'BTS' },
   粉墨: { trad: 'BLACKPINK', en: 'BLACKPINK' },
-
-  // Western Pop (Chinese names & popular nicknames!)
   泰勒斯威夫特: { trad: 'Taylor Swift', en: 'Taylor Swift' },
   泰勒: { trad: 'Taylor Swift', en: 'Taylor Swift' },
   霉霉: { trad: 'Taylor Swift', en: 'Taylor Swift' },
@@ -179,17 +159,94 @@ const ARTIST_ALIASES: Record<string, ArtistAliasEntry> = {
   绿洲乐队: { trad: 'Oasis', en: 'Oasis' },
 };
 
-// Pre-sort alias keys longest-first so "泰勒斯威夫特" matches before "泰勒"
+/**
+ * Iconic Mandopop/Cantopop bare song-title -> canonical artist hint.
+ * When a user searches ONLY "逆光", "天黑黑", or "开始懂了" without typing the artist name,
+ * global catalogs often bury the original classic under indie covers or anime tracks;
+ * adding the canonical Traditional + English artist hint puts the real classic right at #1!
+ */
+const SONG_TITLE_HINTS: Record<string, { trad: string; en: string }> = {
+  逆光: { trad: '孫燕姿 逆光', en: 'Stefanie Sun 逆光' },
+  天黑黑: { trad: '孫燕姿 天黑黑', en: 'Stefanie Sun 天黑黑' },
+  开始懂了: { trad: '孫燕姿 開始懂了', en: 'Stefanie Sun 開始懂了' },
+  開始懂了: { trad: '孫燕姿 開始懂了', en: 'Stefanie Sun 開始懂了' },
+  我怀念的: { trad: '孫燕姿 我懷念的', en: 'Stefanie Sun 我懷念的' },
+  遇见: { trad: '孫燕姿 遇見', en: 'Stefanie Sun 遇見' },
+  绿光: { trad: '孫燕姿 綠光', en: 'Stefanie Sun 綠光' },
+  克卜勒: { trad: '孫燕姿 克卜勒', en: 'Stefanie Sun 克卜勒' },
+  我不难过: { trad: '孫燕姿 我不難過', en: 'Stefanie Sun 我不難過' },
+  雨天: { trad: '孫燕姿 雨天', en: 'Stefanie Sun 雨天' },
+  同类: { trad: '孫燕姿 同類', en: 'Stefanie Sun 同類' },
+  我要的幸福: { trad: '孫燕姿 我要的幸福', en: 'Stefanie Sun 我要的幸福' },
+  眼泪成诗: { trad: '孫燕姿 眼淚成詩', en: 'Stefanie Sun 眼淚成詩' },
+  晴天: { trad: '周杰倫 晴天', en: 'Jay Chou 晴天' },
+  七里香: { trad: '周杰倫 七里香', en: 'Jay Chou 七里香' },
+  夜曲: { trad: '周杰倫 夜曲', en: 'Jay Chou 夜曲' },
+  稻香: { trad: '周杰倫 稻香', en: 'Jay Chou 稻香' },
+  青花瓷: { trad: '周杰倫 青花瓷', en: 'Jay Chou 青花瓷' },
+  告白气球: { trad: '周杰倫 告白氣球', en: 'Jay Chou 告白氣球' },
+  搁浅: { trad: '周杰倫 擱淺', en: 'Jay Chou 擱淺' },
+  一路向北: { trad: '周杰倫 一路向北', en: 'Jay Chou 一路向北' },
+  十年: { trad: '陳奕迅 十年', en: 'Eason Chan 十年' },
+  浮夸: { trad: '陳奕迅 浮誇', en: 'Eason Chan 浮誇' },
+  富士山下: { trad: '陳奕迅 富士山下', en: 'Eason Chan 富士山下' },
+  爱情转移: { trad: '陳奕迅 愛情轉移', en: 'Eason Chan 愛情轉移' },
+  红玫瑰: { trad: '陳奕迅 紅玫瑰', en: 'Eason Chan 紅玫瑰' },
+  孤勇者: { trad: '陳奕迅 孤勇者', en: 'Eason Chan 孤勇者' },
+  红豆: { trad: '王菲 紅豆', en: 'Faye Wong 紅豆' },
+  匆匆那年: { trad: '王菲 匆匆那年', en: 'Faye Wong 匆匆那年' },
+  江南: { trad: '林俊傑 江南', en: 'JJ Lin 江南' },
+  修炼爱情: { trad: '林俊傑 修煉愛情', en: 'JJ Lin 修煉愛情' },
+  不为谁而作的歌: { trad: '林俊傑 不為誰而作的歌', en: 'JJ Lin' },
+  泡沫: { trad: '鄧紫棋 泡沫', en: 'G.E.M. 泡沫' },
+  光年之外: { trad: '鄧紫棋 光年之外', en: 'G.E.M. 光年之外' },
+  喜欢你: { trad: '鄧紫棋 喜歡你', en: 'G.E.M. 喜歡你' },
+  突然好想你: { trad: '五月天 突然好想你', en: 'Mayday 突然好想你' },
+  温柔: { trad: '五月天 溫柔', en: 'Mayday 溫柔' },
+  知足: { trad: '五月天 知足', en: 'Mayday 知足' },
+  小幸运: { trad: '田馥甄 小幸運', en: 'Hebe Tien 小幸運' },
+  魔鬼中的天使: { trad: '田馥甄 魔鬼中的天使', en: 'Hebe Tien' },
+  说谎: { trad: '林宥嘉 說謊', en: 'Yoga Lin 說謊' },
+  成全: { trad: '林宥嘉 成全', en: 'Yoga Lin 成全' },
+  后来: { trad: '劉若英 後來', en: 'Rene Liu 後來' },
+  勇气: { trad: '梁靜茹 勇氣', en: 'Fish Leong 勇氣' },
+  可惜不是你: { trad: '梁靜茹 可惜不是你', en: 'Fish Leong 可惜不是你' },
+  暖暖: { trad: '梁靜茹 暖暖', en: 'Fish Leong 暖暖' },
+  爱爱爱: { trad: '方大同 愛愛愛', en: 'Khalil Fong 愛愛愛' },
+  三人游: { trad: '方大同 三人遊', en: 'Khalil Fong 三人遊' },
+  特别的人: { trad: '方大同 特別的人', en: 'Khalil Fong 特別的人' },
+  普通朋友: { trad: '陶喆 普通朋友', en: 'David Tao 普通朋友' },
+  爱很简单: { trad: '陶喆 愛很簡單', en: 'David Tao 愛很簡單' },
+  流沙: { trad: '陶喆 流沙', en: 'David Tao 流沙' },
+  吻别: { trad: '張學友 吻別', en: 'Jacky Cheung 吻別' },
+  海阔天空: { trad: 'Beyond 海闊天空', en: 'Beyond 海闊天空' },
+  真的爱你: { trad: 'Beyond 真的愛你', en: 'Beyond 真的愛你' },
+  起风了: { trad: '買辣椒也用券 起風了', en: '起風了' },
+  平凡之路: { trad: '朴樹 平凡之路', en: 'Pu Shu 平凡之路' },
+  蓝莲花: { trad: '許巍 藍蓮花', en: 'Xu Wei 藍蓮花' },
+  曾经的你: { trad: '許巍 曾經的你', en: 'Xu Wei 曾經的你' },
+  消愁: { trad: '毛不易 消愁', en: 'Mao Buyi 消愁' },
+  演员: { trad: '薛之謙 演員', en: 'Joker Xue 演員' },
+  体面: { trad: '于文文 體面', en: 'Kelly Yu 體面' },
+  大鱼: { trad: '周深 大魚', en: 'Zhou Shen 大魚' },
+  大风吹: { trad: '草東沒有派對 大風吹', en: 'No Party For Cao Dong' },
+  披星戴月的想你: { trad: '告五人 披星戴月的想你', en: 'Accusefive' },
+  爱人错过: { trad: '告五人 愛人錯過', en: 'Accusefive' },
+  旅行的意义: { trad: '陳綺貞 旅行的意義', en: 'Cheer Chen' },
+  盛夏的果实: { trad: '莫文蔚 盛夏的果實', en: 'Karen Mok' },
+  红色高跟鞋: { trad: '蔡健雅 紅色高跟鞋', en: 'Tanya Chua' },
+  倒带: { trad: '蔡依林 倒帶', en: 'Jolin Tsai 倒帶' },
+  日不落: { trad: '蔡依林 日不落', en: 'Jolin Tsai 日不落' },
+  隐形的翅膀: { trad: '張韶涵 隱形的翅膀', en: 'Angela Zhang' },
+  小情歌: { trad: '蘇打綠 小情歌', en: 'Sodagreen 小情歌' },
+};
+
 const SORTED_ALIAS_KEYS = Object.keys(ARTIST_ALIASES).sort((a, b) => b.length - a.length);
 
 export function hasCjk(text: string): boolean {
   return /[\u4e00-\u9fff]/.test(text);
 }
 
-/**
- * Converts Simplified Chinese characters to Traditional Chinese for Apple Music TW/HK/SG/US lookup
- * and cross-source deduplication.
- */
 export function toTraditionalChinese(text: string): string {
   if (!text || !hasCjk(text)) return text;
   let out = '';
@@ -200,20 +257,14 @@ export function toTraditionalChinese(text: string): string {
 }
 
 export interface ExpandedMusicQuery {
-  /** Original cleaned query (e.g. "孙燕姿 逆光") */
   primary: string;
-  /** Traditional Chinese query (e.g. "孫燕姿 逆光") */
   traditional: string;
-  /** English / romanized alias variant if matched (e.g. "Stefanie Sun 逆光" or "Taylor Swift") */
   englishAlias: string | null;
-  /** Whether the query contains CJK characters */
+  songHintTrad: string | null;
+  songHintEn: string | null;
   isCjk: boolean;
 }
 
-/**
- * Expands a cleaned query into Simplified, Traditional, and English/Alias variants
- * so searching "孙燕姿 逆光", "逆光", "周杰伦", or "霉霉" hits ALL global catalogs.
- */
 export function expandMusicQuery(cleaned: string): ExpandedMusicQuery {
   const primary = cleaned.trim();
   const lower = primary.toLowerCase();
@@ -238,18 +289,22 @@ export function expandMusicQuery(cleaned: string): ExpandedMusicQuery {
     trad = toTraditionalChinese(primary);
   }
 
+  // Check bare classic song title hints (e.g. "逆光", "天黑黑", "开始懂了")
+  const exactHint = SONG_TITLE_HINTS[primary] || SONG_TITLE_HINTS[trad] || null;
+
   return {
     primary,
     traditional: trad,
-    englishAlias: enAlias && enAlias.toLowerCase() !== primary.toLowerCase() ? enAlias : null,
+    englishAlias:
+      enAlias && enAlias.toLowerCase() !== primary.toLowerCase()
+        ? enAlias
+        : exactHint?.en || null,
+    songHintTrad: exactHint?.trad || null,
+    songHintEn: exactHint?.en || null,
     isCjk: hasCjk(primary),
   };
 }
 
-/**
- * Canonical deduplication key normalizing Simplified/Traditional & stripping parenthetical tags
- * like "(Remastered)", "(Live)", "（电影主题曲）".
- */
 export function canonicalTrackKey(title: string, artist: string): string {
   const norm = (s: string) =>
     toTraditionalChinese(s)
@@ -257,7 +312,6 @@ export function canonicalTrackKey(title: string, artist: string): string {
       .replace(/\(.*?\)|（.*?）|\[.*?\]|【.*?】/g, '')
       .replace(/[^\w\u4e00-\u9fff]/g, '');
 
-  // Map English artist names back to canonical Chinese key if known so "Stefanie Sun" == "孫燕姿"
   const normArtistRaw = norm(artist);
   let canonicalArtist = normArtistRaw;
   for (const key of SORTED_ALIAS_KEYS) {
@@ -271,4 +325,46 @@ export function canonicalTrackKey(title: string, artist: string): string {
   }
 
   return `${norm(title)}::${canonicalArtist}`;
+}
+
+export interface ExternalMusicLinks {
+  netease: string;
+  qq: string;
+  apple: string;
+  spotify: string;
+}
+
+/**
+ * Generates direct external links to listen to the FULL song on NetEase, QQ Music, Apple Music & Spotify.
+ */
+export function buildExternalMusicLinks(
+  title: string,
+  artist: string,
+  opts?: {
+    neteaseId?: string;
+    qqMid?: string;
+    appleUrl?: string;
+    spotifyUrl?: string;
+  }
+): ExternalMusicLinks {
+  const cleanTitle = title.replace(/\(.*?\)|（.*?）/g, '').trim() || title.trim();
+  const query = `${cleanTitle} ${artist}`.trim();
+  const enc = encodeURIComponent(query);
+
+  return {
+    netease: opts?.neteaseId
+      ? `https://music.163.com/#/song?id=${encodeURIComponent(opts.neteaseId)}`
+      : `https://music.163.com/#/search/m/?s=${enc}&type=1`,
+    qq: opts?.qqMid
+      ? `https://y.qq.com/n/ryqq/songDetail/${encodeURIComponent(opts.qqMid)}`
+      : `https://y.qq.com/n/ryqq/search?w=${enc}`,
+    apple:
+      opts?.appleUrl && opts.appleUrl.includes('music.apple.com')
+        ? opts.appleUrl
+        : `https://music.apple.com/search?term=${enc}`,
+    spotify:
+      opts?.spotifyUrl && opts.spotifyUrl.includes('spotify.com')
+        ? opts.spotifyUrl
+        : `https://open.spotify.com/search/${enc}`,
+  };
 }
