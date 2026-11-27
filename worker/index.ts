@@ -17,6 +17,8 @@ interface CloudflareCacheStorage {
 }
 
 const CACHEABLE_API_PATHS = new Set(['/api/search', '/api/discover', '/api/lyrics']);
+// Bump cache version whenever API response schema / preview routing changes so stale edge cache is bypassed immediately
+const EDGE_CACHE_VERSION = 'v4';
 
 export default {
   async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
@@ -27,8 +29,12 @@ export default {
         ? (caches as unknown as CloudflareCacheStorage).default
         : undefined;
 
+    const cacheUrl = new URL(request.url);
+    cacheUrl.searchParams.set('_cv', EDGE_CACHE_VERSION);
+    const cacheKey = new Request(cacheUrl.toString(), { method: 'GET' });
+
     if (shouldCache && cfCache) {
-      const cached = await cfCache.match(request);
+      const cached = await cfCache.match(cacheKey);
       if (cached) {
         return cached;
       }
@@ -40,9 +46,9 @@ export default {
       if (shouldCache && cfCache && apiResponse.status === 200 && !cacheControl.includes('no-store')) {
         const toCache = apiResponse.clone();
         if (ctx) {
-          ctx.waitUntil(cfCache.put(request, toCache));
+          ctx.waitUntil(cfCache.put(cacheKey, toCache));
         } else {
-          void cfCache.put(request, toCache);
+          void cfCache.put(cacheKey, toCache);
         }
       }
       return apiResponse;

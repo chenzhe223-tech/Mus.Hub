@@ -4,7 +4,6 @@ import {
   BookmarkPlus,
   ChevronDown,
   Clapperboard,
-  Disc3,
   Download,
   Edit3,
   ExternalLink,
@@ -59,7 +58,7 @@ interface StudioViewProps {
   activePalette: Palette;
   isPlaying: boolean;
   authorName: string;
-  onSelectSong: (song: Song) => void;
+  onSelectSong: (song: Song, autoPlay?: boolean) => void;
   onUpdateSongs: (songs: Song[]) => void;
   onUpdateSongMeta: (patch: Partial<Song>) => void;
   onUpdateConfig: (patch: Partial<PosterConfig>) => void;
@@ -487,9 +486,9 @@ export const StudioView: React.FC<StudioViewProps> = ({
                 <span>
                   {isPlaying
                     ? '暂停播放'
-                    : song.previewUrl
-                      ? '试听原曲'
-                      : '试听黑胶音'}
+                    : song.id.startsWith('curated-') && !song.previewUrl
+                      ? '试听氛围和弦'
+                      : '试听原曲'}
                 </span>
                 {isPlaying && (
                   <span className="inline-flex items-end gap-[2px] h-3 ml-0.5">
@@ -893,6 +892,30 @@ export const StudioView: React.FC<StudioViewProps> = ({
               </div>
             </div>
 
+            {/* Compact Active Track Bar inside Panel B so mobile users can audition immediately without scrolling back up */}
+            <div className="flex items-center justify-between gap-2.5 px-3 py-2 rounded-xl hi-fi-inset border border-[var(--line-subtle)]">
+              <div className="min-w-0 flex-1">
+                <div className="text-[11px] font-semibold text-[var(--ink-primary)] truncate">
+                  当前唱片：《{song.title}》— {song.artist}
+                </div>
+                <div className="font-tech text-[10px] text-[var(--ink-muted)] truncate">
+                  点曲目右侧 ▶ 即可直接切换并试听原曲
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={onToggleAudio}
+                className={`shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium border transition ${
+                  isPlaying
+                    ? 'bg-[var(--accent-soft)] border-[var(--accent-border)] text-[var(--accent)]'
+                    : 'bg-[var(--bg-panel)] border-[var(--line-subtle)] text-[var(--ink-primary)]'
+                }`}
+              >
+                {isPlaying ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3 text-[var(--accent)]" />}
+                <span>{isPlaying ? '暂停' : '试听'}</span>
+              </button>
+            </div>
+
             {/* Tracklist */}
             <div
               ref={tracklistRef}
@@ -911,55 +934,83 @@ export const StudioView: React.FC<StudioViewProps> = ({
                 <>
                   {songs.map((item, idx) => {
                     const active = song.id === item.id;
+                    const itemPlaying = active && isPlaying;
                     const srcLabel = item.source ? SOURCE_LABELS[item.source] : '';
                     return (
-                      <button
+                      <div
                         key={item.id}
-                        type="button"
-                        disabled={isRecording}
-                        onClick={() => onSelectSong(item)}
-                        className={`w-full flex items-center gap-3 p-2.5 rounded-xl border text-left transition ${
+                        className={`w-full flex items-center gap-2 p-2 rounded-xl border transition ${
                           active
                             ? 'bg-[var(--bg-elevated)] border-[var(--accent-border)] text-[var(--ink-primary)]'
                             : 'bg-[var(--bg-inset)]/60 border-transparent hover:bg-[var(--bg-hover)] text-[var(--ink-primary)]'
                         }`}
                       >
-                        <span className="font-tech text-[10px] text-[var(--ink-muted)] w-5 text-center shrink-0">
-                          {String(idx + 1).padStart(2, '0')}
-                        </span>
-                        <img
-                          src={item.cover}
-                          alt={item.title}
-                          loading="lazy"
-                          className="w-10 h-10 rounded-md object-cover bg-[var(--bg-inset)] shrink-0"
-                        />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-xs sm:text-sm font-medium truncate">
-                              {item.title}
-                            </span>
-                            {item.previewUrl && (
-                              <span className="font-tech text-[9px] px-1.5 py-0.5 rounded bg-[var(--accent-soft)] text-[var(--accent)] shrink-0">
-                                原曲
+                        <button
+                          type="button"
+                          disabled={isRecording}
+                          onClick={() => onSelectSong(item, false)}
+                          className="flex items-center gap-2.5 min-w-0 flex-1 text-left"
+                        >
+                          <span className="font-tech text-[10px] text-[var(--ink-muted)] w-4 text-center shrink-0">
+                            {String(idx + 1).padStart(2, '0')}
+                          </span>
+                          <img
+                            src={item.cover}
+                            alt={item.title}
+                            loading="lazy"
+                            className="w-10 h-10 rounded-md object-cover bg-[var(--bg-inset)] shrink-0"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs sm:text-sm font-medium truncate">
+                                {item.title}
                               </span>
-                            )}
+                              {item.previewUrl && (
+                                <span className="font-tech text-[9px] px-1.5 py-0.5 rounded bg-[var(--accent-soft)] text-[var(--accent)] shrink-0">
+                                  原曲
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-[var(--ink-muted)] truncate mt-0.5">
+                              {item.artist} · {item.album}
+                              {srcLabel && item.source !== 'curated' && (
+                                <span className="ml-1.5 font-tech text-[9px] opacity-75">
+                                  [{srcLabel}]
+                                </span>
+                              )}
+                            </div>
                           </div>
-                          <div className="text-[11px] text-[var(--ink-muted)] truncate mt-0.5">
-                            {item.artist} · {item.album}
-                            {srcLabel && item.source !== 'curated' && (
-                              <span className="ml-1.5 font-tech text-[9px] opacity-75">
-                                [{srcLabel}]
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="shrink-0 flex items-center gap-2">
-                          <span className="font-tech text-[11px] text-[var(--ink-muted)]">
+                        </button>
+
+                        <div className="shrink-0 flex items-center gap-1.5">
+                          <span className="font-tech text-[10px] text-[var(--ink-muted)] hidden sm:inline">
                             {item.duration}
                           </span>
-                          {active && <Disc3 className="w-3.5 h-3.5 text-[var(--accent)] animate-spin" />}
+                          <button
+                            type="button"
+                            disabled={isRecording}
+                            onClick={() => {
+                              if (active) {
+                                onToggleAudio();
+                              } else {
+                                onSelectSong(item, true);
+                              }
+                            }}
+                            title={itemPlaying ? '暂停试听' : `切歌并试听《${item.title}》`}
+                            className={`w-8 h-8 rounded-full flex items-center justify-center border transition ${
+                              itemPlaying
+                                ? 'bg-[var(--accent)] border-[var(--accent)] text-[var(--accent-ink)]'
+                                : 'bg-[var(--bg-panel)] border-[var(--line-subtle)] text-[var(--accent)] hover:border-[var(--accent-border)]'
+                            }`}
+                          >
+                            {itemPlaying ? (
+                              <Pause className="w-3.5 h-3.5" />
+                            ) : (
+                              <Play className="w-3.5 h-3.5 ml-0.5" />
+                            )}
+                          </button>
                         </div>
-                      </button>
+                      </div>
                     );
                   })}
 

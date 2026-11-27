@@ -40,12 +40,16 @@ export interface UnifiedTrack {
 const ALLOWED_PROXY_SUFFIXES = [
   '.mzstatic.com',
   '.itunes.apple.com',
+  '.phobos.apple.com',
   '.dzcdn.net',
   '.deezer.com',
   '.music.126.net',
   '.gtimg.cn',
   '.qqmusic.qq.com',
 ];
+
+// Short-lived in-isolate cache for freshly resolved Deezer track preview URLs (safe < 5 min)
+const freshPreviewUrlCache = new Map<string, { url: string; expiresAt: number }>();
 
 export function jsonResponse(
   data: unknown,
@@ -275,6 +279,13 @@ async function searchDeezer(term: string, limit: number, offset = 0): Promise<Un
       const ms = (Number(item.duration) || 210) * 1000;
       const title = item.title!.trim();
       const artist = item.artist!.name!.trim();
+      // Use evergreen `/api/preview?deezerId=...` instead of short-lived `?hdnea=exp=...` URLs!
+      const evergreenPreview =
+        item.id && rawPreview
+          ? `/api/preview?deezerId=${encodeURIComponent(String(item.id))}`
+          : rawPreview
+            ? buildProxyPath(rawPreview)
+            : null;
       return {
         id: `deezer-${item.id ?? Math.random().toString(36).slice(2)}`,
         title,
@@ -284,7 +295,7 @@ async function searchDeezer(term: string, limit: number, offset = 0): Promise<Un
         durationMs: ms,
         cover: rawCover ? buildProxyPath(rawCover) : '',
         rawCover,
-        previewUrl: rawPreview ? buildProxyPath(rawPreview) : null,
+        previewUrl: evergreenPreview,
         rawPreviewUrl: rawPreview,
         source: 'deezer' as const,
         externalUrl: item.link,
@@ -650,6 +661,12 @@ async function fetchDeezerGlobalChart(limit = 28): Promise<UnifiedTrack[]> {
       const ms = (Number(item.duration) || 210) * 1000;
       const title = item.title!.trim();
       const artist = item.artist!.name!.trim();
+      const evergreenPreview =
+        item.id && rawPreview
+          ? `/api/preview?deezerId=${encodeURIComponent(String(item.id))}`
+          : rawPreview
+            ? buildProxyPath(rawPreview)
+            : null;
       return {
         id: `deezer-chart-${item.id}`,
         title,
@@ -659,7 +676,7 @@ async function fetchDeezerGlobalChart(limit = 28): Promise<UnifiedTrack[]> {
         durationMs: ms,
         cover: rawCover ? buildProxyPath(rawCover) : '',
         rawCover,
-        previewUrl: rawPreview ? buildProxyPath(rawPreview) : null,
+        previewUrl: evergreenPreview,
         rawPreviewUrl: rawPreview,
         source: 'deezer' as const,
         externalUrl: item.link,
@@ -863,6 +880,141 @@ function isAllowedProxyUrl(target: URL): boolean {
   return ALLOWED_PROXY_SUFFIXES.some((suffix) => host === suffix.slice(1) || host.endsWith(suffix));
 }
 
+async function resolveFreshPreviewUrl(
+  deezerId: string,
+  title: string,
+  artist: string,
+  forceRefresh = false
+): Promise<string | null> {
+  const cacheKey = deezerId ? `dz:${deezerId}` : `q:${title}::${artist}`;
+  if (!forceRefresh) {
+    const cached = freshPreviewUrlCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.url;
+    }
+  }
+
+  let resolved: string | null = null;
+
+  // 1. Direct Deezer Track lookup (fast ~40ms, returns brand-new non-expired hdnea token)
+  if (deezerId) {
+    interface DeezerTrackResp {
+      preview?: string;
+    }
+    const data = await fetchJsonWithTimeout<DeezerTrackResp>(
+      `https://api.deezer.com/track/${encodeURIComponent(deezerId)}`,
+      5000
+    );
+    if (data?.preview) {
+      resolved = data.preview.replace(/^http:\/\//i, 'https://');
+    }
+  }
+
+  // 2. Fallback: live search by title + artist (prefers Apple permanent preview, then fresh Deezer)
+  if (!resolved && title) {
+    const expanded = expandMusicQuery(`${artist} ${title}`.trim());
+    const [itTw, dzFresh] = await Promise.all([
+      searchItunes(expanded.songHintTrad || expanded.traditional, expanded.isCjk ? 'TW' : 'US', 5),
+      searchDeezer(expanded.englishAlias || expanded.traditional, 5),
+    ]);
+    resolved =
+      itTw.find((t) => t.rawPreviewUrl)?.rawPreviewUrl ||
+      dzFresh.find((t) => t.rawPreviewUrl)?.rawPreviewUrl ||
+      null;
+  }
+
+  if (resolved) {
+    if (freshPreviewUrlCache.size > 200) {
+      const firstKey = freshPreviewUrlCache.keys().next().value;
+      if (firstKey) freshPreviewUrlCache.delete(firstKey);
+    }
+    freshPreviewUrlCache.set(cacheKey, {
+      url: resolved,
+      expiresAt: Date.now() + 4 * 60 * 1000,
+    });
+  }
+  return resolved;
+}
+
+/**
+ * Evergreen mobile-safe audio preview streamer (`GET /api/preview?deezerId=...` or `?title=...&artist=...`).
+ * Always resolves a fresh upstream CDN URL, forwards iOS Safari Range requests cleanly, and auto-retries on 403.
+ */
+async function handlePreviewStream(request: Request, url: URL): Promise<Response> {
+  const deezerId = (url.searchParams.get('deezerId') || '').trim();
+  const title = (url.searchParams.get('title') || '').trim();
+  const artist = (url.searchParams.get('artist') || '').trim();
+
+  if (!deezerId && !title) {
+    return jsonResponse({ error: 'Missing deezerId or title' }, 400);
+  }
+
+  const rangeHeader = request.headers.get('range');
+  const ifRangeHeader = request.headers.get('if-range');
+
+  const fetchAudio = async (audioUrl: string): Promise<Response> => {
+    const headers = new Headers({
+      'User-Agent':
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+    });
+    if (rangeHeader) headers.set('range', rangeHeader);
+    if (ifRangeHeader) headers.set('if-range', ifRangeHeader);
+    return fetch(audioUrl, {
+      method: request.method === 'HEAD' ? 'HEAD' : 'GET',
+      headers,
+      redirect: 'follow',
+    });
+  };
+
+  let audioUrl = await resolveFreshPreviewUrl(deezerId, title, artist, false);
+  if (!audioUrl) {
+    return jsonResponse({ error: 'No playable preview available for this track' }, 404);
+  }
+
+  let resolvedUrl: string = audioUrl;
+  try {
+    let upstream = await fetchAudio(resolvedUrl);
+    // Auto-refresh token once if upstream returned 403/410
+    if (upstream.status === 403 || upstream.status === 410) {
+      const refreshed = await resolveFreshPreviewUrl(deezerId, title, artist, true);
+      if (refreshed) {
+        resolvedUrl = refreshed;
+        upstream = await fetchAudio(resolvedUrl);
+      }
+    }
+
+    const outHeaders = new Headers();
+    for (const h of [
+      'content-type',
+      'content-length',
+      'content-range',
+      'accept-ranges',
+      'etag',
+      'last-modified',
+    ]) {
+      const v = upstream.headers.get(h);
+      if (v) outHeaders.set(h, v);
+    }
+    if (!outHeaders.has('content-type')) {
+      outHeaders.set('content-type', resolvedUrl.includes('.m4a') ? 'audio/mp4' : 'audio/mpeg');
+    }
+    if (!outHeaders.has('accept-ranges')) {
+      outHeaders.set('accept-ranges', 'bytes');
+    }
+    outHeaders.set('Access-Control-Allow-Origin', '*');
+    outHeaders.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
+    outHeaders.set('Cross-Origin-Resource-Policy', 'cross-origin');
+    outHeaders.set('Cache-Control', 'no-transform, no-store');
+
+    return new Response(upstream.body, {
+      status: upstream.status,
+      headers: outHeaders,
+    });
+  } catch {
+    return jsonResponse({ error: 'Failed to stream audio preview' }, 502);
+  }
+}
+
 async function handleProxy(request: Request, url: URL): Promise<Response> {
   const targetStr = url.searchParams.get('url');
   if (!targetStr) {
@@ -988,6 +1140,10 @@ export async function handleMusicApiRequest(
 
   if (url.pathname === '/api/lyrics') {
     return handleLyrics(url);
+  }
+
+  if (url.pathname === '/api/preview') {
+    return handlePreviewStream(request, url);
   }
 
   if (url.pathname === '/api/proxy') {

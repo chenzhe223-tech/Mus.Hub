@@ -1,37 +1,72 @@
 import type { Song } from '../types';
 
 /**
- * Extracts raw upstream URL from `/api/proxy?url=...` and orders playback candidates:
- * - Apple CDN (`itunes.apple.com`): direct first (fast global/Asia CDN + native HTTP 206), proxy fallback
- * - Deezer (`dzcdn.net`): proxy first (avoids regional blocks), direct fallback
- * - Local `blob:` / `data:` URLs: direct only
+ * Builds ordered playback candidates optimized for iOS Safari / WeChat WebKit / Android & Desktop:
+ * 1. Evergreen `/api/preview?deezerId=...` (always fresh, same-origin, immune to Deezer 15-min token expiry!)
+ * 2. Same-origin `/api/proxy?url=...` FIRST so audio streams over the exact same reachable HTTPS origin as the app
+ *    within the first synchronous iOS tap gesture.
+ * 3. Direct CDN URL & dynamic `/api/preview?title=...&artist=...` (even works for NetEase/QQ tracks that had `previewUrl: null`!).
  */
-function buildAudioCandidates(previewUrl: string): string[] {
-  if (!previewUrl) return [];
+function buildAudioCandidates(song: Song): string[] {
+  const previewUrl = song.previewUrl || '';
   if (previewUrl.startsWith('blob:') || previewUrl.startsWith('data:')) {
     return [previewUrl];
   }
 
-  let rawUrl = previewUrl;
-  let proxyUrl = previewUrl;
+  const list: string[] = [];
+  const add = (u: string) => {
+    if (u && !list.includes(u)) list.push(u);
+  };
 
-  if (previewUrl.startsWith('/api/proxy?url=')) {
-    try {
-      const parsed = new URL(previewUrl, window.location.origin);
-      const extracted = parsed.searchParams.get('url');
-      if (extracted) rawUrl = extracted;
-    } catch {
-      // Keep as is
-    }
-  } else if (/^https?:\/\//i.test(previewUrl)) {
-    rawUrl = previewUrl.replace(/^http:\/\//i, 'https://');
-    proxyUrl = `/api/proxy?url=${encodeURIComponent(rawUrl)}`;
+  const isHttpApp =
+    typeof window !== 'undefined' && window.location.protocol.startsWith('http');
+
+  const titleArtistFallback =
+    isHttpApp && song.title && !song.id.startsWith('curated-')
+      ? `/api/preview?title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(
+          song.artist || ''
+        )}`
+      : '';
+
+  // Already an evergreen /api/preview URL
+  if (previewUrl.startsWith('/api/preview?')) {
+    add(previewUrl);
+    if (titleArtistFallback) add(titleArtistFallback);
+    return list;
   }
 
-  if (rawUrl === proxyUrl) return [rawUrl];
+  // Upgrade Deezer tracks (including legacy saved/shared posts) to evergreen /api/preview
+  const dzIdMatch = song.id.match(/^deezer-(?:chart-)?(\d+)$/);
+  if (dzIdMatch && isHttpApp) {
+    add(`/api/preview?deezerId=${dzIdMatch[1]}`);
+  }
 
-  const isAppleCdn = /\.itunes\.apple\.com\b/i.test(rawUrl);
-  return isAppleCdn ? [rawUrl, proxyUrl] : [proxyUrl, rawUrl];
+  if (previewUrl) {
+    let rawUrl = previewUrl;
+    let proxyUrl = previewUrl;
+
+    if (previewUrl.startsWith('/api/proxy?url=')) {
+      try {
+        const parsed = new URL(previewUrl, window.location.origin);
+        const extracted = parsed.searchParams.get('url');
+        if (extracted) rawUrl = extracted;
+      } catch {
+        // Keep as is
+      }
+    } else if (/^https?:\/\//i.test(previewUrl)) {
+      rawUrl = previewUrl.replace(/^http:\/\//i, 'https://');
+      proxyUrl = isHttpApp ? `/api/proxy?url=${encodeURIComponent(rawUrl)}` : rawUrl;
+    }
+
+    add(proxyUrl);
+    add(rawUrl);
+  }
+
+  if (titleArtistFallback) {
+    add(titleArtistFallback);
+  }
+
+  return list;
 }
 
 export interface AudioPlayResult {
@@ -41,12 +76,11 @@ export interface AudioPlayResult {
 }
 
 /**
- * Mobile-First Unified Audio Engine:
- * - Plays real song previews natively via a persistent DOM `<audio playsinline>` element
- *   (NO `createMediaElementSource` hijacking, NO `currentTime = 0` on `HAVE_NOTHING` —
- *   completely eliminating iOS Safari / WeChat `InvalidStateError` & silent-audio bugs!).
- * - NEVER substitutes fake synth chords when a real song has a `previewUrl`!
- *   Synth chords are ONLY used for curated built-in songs that have no `previewUrl`.
+ * Bulletproof Mobile-First Audio Engine (iOS Safari + WeChat WKWebView + Android + Desktop):
+ * - Destroys the previous HTMLAudioElement and creates a BRAND-NEW `new Audio(url)` on every track switch,
+ *   100% eliminating the iOS Safari / WeChat WebKit bug where changing `.src` on a reused `<audio>` element
+ *   keeps playing the previous song's cached AVPlayerItem buffer!
+ * - NEVER plays fake synth chords for real online songs; synth is strictly reserved for built-in `curated-*` cards.
  */
 class SparkAudioEngine {
   private ctx: AudioContext | null = null;
@@ -104,25 +138,40 @@ class SparkAudioEngine {
     return this.ctx;
   }
 
-  private ensureNativeAudio(): HTMLAudioElement {
-    if (!this.nativeAudio) {
-      const el = document.createElement('audio');
-      el.loop = true;
-      el.preload = 'auto';
-      el.setAttribute('playsinline', '');
-      el.setAttribute('webkit-playsinline', '');
-      el.style.display = 'none';
-      el.volume = 1.0;
-      el.muted = false;
-      el.addEventListener('ended', () => {
-        this.stop();
-      });
-      if (typeof document !== 'undefined' && document.body) {
-        document.body.appendChild(el);
+  /**
+   * Fully tears down the active HTMLAudioElement so iOS/WeChat WebKit immediately releases the old AVPlayerItem.
+   */
+  private destroyNativeAudio(): void {
+    const old = this.nativeAudio;
+    this.nativeAudio = null;
+    if (!old) return;
+    try {
+      old.onerror = null;
+      old.onended = null;
+      old.pause();
+      old.removeAttribute('src');
+      old.load();
+      if (old.parentNode) {
+        old.parentNode.removeChild(old);
       }
-      this.nativeAudio = el;
+    } catch {
+      // Ignore teardown errors
     }
-    return this.nativeAudio;
+  }
+
+  /**
+   * Instantiates a fresh, clean `<audio>` element for the requested track URL.
+   */
+  private createFreshAudio(url: string): HTMLAudioElement {
+    const el = new Audio();
+    el.loop = true;
+    el.preload = 'auto';
+    el.setAttribute('playsinline', '');
+    el.setAttribute('webkit-playsinline', '');
+    el.volume = 1.0;
+    el.muted = false;
+    el.src = url;
+    return el;
   }
 
   subscribe(fn: () => void): () => void {
@@ -294,109 +343,95 @@ class SparkAudioEngine {
     this.emit();
   }
 
-  /**
-   * Starts playback immediately within user gesture.
-   * For songs with `previewUrl`: plays the real studio preview (NEVER silently substitutes unrelated synth!).
-   * For built-in curated songs without `previewUrl`: plays the warm Lo-Fi chord synth.
-   */
   async play(song: Song): Promise<AudioPlayResult> {
     this.stop(false);
     const seq = ++this.playSeq;
     this.currentSongId = song.id;
     this.startedAt = performance.now();
 
-    if (song.previewUrl) {
-      const candidates = buildAudioCandidates(song.previewUrl);
-      const audio = this.ensureNativeAudio();
+    const isCuratedDemo = song.id.startsWith('curated-') && !song.previewUrl;
+    if (isCuratedDemo) {
+      this.playing = true;
+      this.ensureContext();
+      this.startSynth(song, seq);
+      return { ok: true, mode: 'synth' };
+    }
 
-      for (let i = 0; i < candidates.length; i++) {
-        if (seq !== this.playSeq) return { ok: false, mode: 'failed' };
-        const candidateUrl = candidates[i];
-        try {
-          audio.onerror = null;
-          audio.removeAttribute('crossorigin');
-          // IMPORTANT: Do NOT assign `audio.currentTime = 0` right after changing `src`!
-          // On iOS Safari & WeChat WebKit, `readyState` is 0 (HAVE_NOTHING) and setting
-          // `currentTime` immediately throws `InvalidStateError` before `play()` even runs!
-          if (audio.src !== candidateUrl) {
-            audio.src = candidateUrl;
-          } else if (audio.readyState >= 1) {
-            try {
-              audio.currentTime = 0;
-            } catch {
-              // Ignore
-            }
-          }
-
-          // Invoke play() synchronously inside the tap gesture
-          const playPromise = audio.play();
-          await Promise.race([
-            playPromise,
-            new Promise<never>((_, reject) =>
-              window.setTimeout(() => reject(new Error('Audio timeout')), 8000)
-            ),
-          ]);
-
-          if (seq !== this.playSeq) {
-            audio.pause();
-            return { ok: false, mode: 'failed' };
-          }
-
-          this.playing = true;
-          this.mode = 'track';
-
-          // Runtime fallback if stream drops after initial play() resolves
-          audio.onerror = () => {
-            if (seq !== this.playSeq || !this.playing) return;
-            const nextUrl = candidates[i + 1];
-            if (nextUrl) {
-              audio.onerror = null;
-              audio.src = nextUrl;
-              void audio.play().catch(() => this.stop());
-            } else {
-              this.stop();
-            }
-          };
-
-          this.emit();
-          return { ok: true, mode: 'track' };
-        } catch {
-          // Try next candidate URL
-        }
-      }
-
-      // Real track failed both direct and proxy URLs — stop honestly instead of playing unrelated synth!
+    const candidates = buildAudioCandidates(song);
+    if (candidates.length === 0) {
       this.playing = false;
       this.currentSongId = null;
       this.emit();
       return {
         ok: false,
         mode: 'failed',
-        message: '原曲试听音频加载超时或已过期，请再点一次重试，或点击下方去外部平台听完整版',
+        message: '该曲目暂无 30s 试听片段，请点击下方前往网易云 / QQ 音乐 / Apple Music 听完整版',
       };
     }
 
-    // Curated built-in songs (no previewUrl): play warm Lo-Fi electric piano chord synth
-    this.playing = true;
-    this.ensureContext();
-    this.startSynth(song, seq);
-    return { ok: true, mode: 'synth' };
+    let lastErrName = '';
+    for (let i = 0; i < candidates.length; i++) {
+      if (seq !== this.playSeq) return { ok: false, mode: 'failed' };
+      const candidateUrl = candidates[i];
+      this.destroyNativeAudio();
+      const audio = this.createFreshAudio(candidateUrl);
+      this.nativeAudio = audio;
+
+      try {
+        const playPromise = audio.play();
+        await Promise.race([
+          playPromise,
+          new Promise<never>((_, reject) =>
+            window.setTimeout(() => reject(new Error('Timeout')), 14000)
+          ),
+        ]);
+
+        if (seq !== this.playSeq) {
+          this.destroyNativeAudio();
+          return { ok: false, mode: 'failed' };
+        }
+
+        this.playing = true;
+        this.mode = 'track';
+
+        audio.onended = () => {
+          if (seq === this.playSeq) this.stop();
+        };
+        audio.onerror = () => {
+          if (seq !== this.playSeq || !this.playing) return;
+          const nextUrl = candidates[i + 1];
+          if (nextUrl) {
+            this.destroyNativeAudio();
+            const fallbackAudio = this.createFreshAudio(nextUrl);
+            this.nativeAudio = fallbackAudio;
+            void fallbackAudio.play().catch(() => this.stop());
+          } else {
+            this.stop();
+          }
+        };
+
+        this.emit();
+        return { ok: true, mode: 'track' };
+      } catch (err) {
+        lastErrName = err instanceof Error ? err.name || err.message : 'PlayError';
+        this.destroyNativeAudio();
+      }
+    }
+
+    this.playing = false;
+    this.currentSongId = null;
+    this.emit();
+    return {
+      ok: false,
+      mode: 'failed',
+      message: `《${song.title}》试听流加载失败（${lastErrName || '网络波动'}），请重试或点击下方去外部平台听完整版`,
+    };
   }
 
   stop(notify = true): void {
     this.playSeq++;
     this.playing = false;
-    if (this.nativeAudio) {
-      this.nativeAudio.onerror = null;
-      this.nativeAudio.pause();
-      if (this.nativeAudio.readyState >= 1) {
-        try {
-          this.nativeAudio.currentTime = 0;
-        } catch {
-          // Ignore
-        }
-      }
-    }
+    this.destroyNativeAudio();
     if (this.synthInterval !== null) {
       window.clearInterval(this.synthInterval);
       this.synthInterval = null;

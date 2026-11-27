@@ -159,7 +159,7 @@ export default function App() {
     showToast(next === 'light' ? '已切换至「日光唱片」明亮模式' : '已切换至「黑胶暗房」深色模式');
   };
 
-  const handleSelectSong = (nextSong: Song) => {
+  const handleSelectSong = (nextSong: Song, autoPlay = false) => {
     audioEngine.stop();
     setSelectedSong(nextSong);
     setConfig((prev) => ({
@@ -168,6 +168,11 @@ export default function App() {
     }));
     if (nextSong.palette) {
       setExtractedPalette(nextSong.palette);
+    }
+    if (autoPlay) {
+      void audioEngine.play(nextSong).then((res) => {
+        if (!res.ok && res.message) showToast(res.message);
+      });
     }
   };
 
