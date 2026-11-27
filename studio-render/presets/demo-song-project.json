@@ -1,0 +1,43 @@
+{
+  "schemaVersion": "1.0",
+  "durationSec": 8,
+  "fps": 30,
+  "scenePreset": "lyric-mv-9x16",
+  "song": {
+    "id": "curated-1",
+    "title": "Blue Hour in Tokyo",
+    "artist": "Blue Hour Quartet",
+    "album": "Midnight Vinyl Press",
+    "duration": "03:42",
+    "lyric": "雨落在老唱片机旁，霓虹把整条巷子染成了琥珀色。",
+    "bpm": 86,
+    "chordFreqs": [220, 261.63, 329.63, 392.0, 493.88]
+  },
+  "config": {
+    "mode": "dynamic",
+    "template": "vinyl",
+    "ratio": "9:16",
+    "paletteKey": "midnight",
+    "fontStyle": "serif",
+    "lyric": "雨落在老唱片机旁，霓虹把整条巷子染成了琥珀色。",
+    "showLyric": true,
+    "showWave": true,
+    "showProgress": true,
+    "showQr": true,
+    "filmGrain": true
+  },
+  "palette": {
+    "bg1": "#0f1218",
+    "bg2": "#1c2738",
+    "accent": "#e9be78",
+    "accent2": "#d96236",
+    "text": "#f5f0e8",
+    "muted": "#a8a29e",
+    "light": false
+  },
+  "lyricsLines": [
+    "雨落在老唱片机旁，霓虹把整条巷子染成了琥珀色。",
+    "针尖划过 33⅓ 转的纹理，夜色慢慢沉淀下来。",
+    "把喜欢的旋律，留给这一张永不褪色的唱片。"
+  ]
+}

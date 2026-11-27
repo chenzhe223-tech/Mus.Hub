@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 240" width="640" height="240" fill="none">
+  <defs>
+    <linearGradient id="sonicAccentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f2b866" />
+      <stop offset="55%" stop-color="#d96236" />
+      <stop offset="100%" stop-color="#e9be78" />
+    </linearGradient>
+    <linearGradient id="sonicDiscSheen" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.28" />
+      <stop offset="50%" stop-color="#ffffff" stop-opacity="0.02" />
+      <stop offset="100%" stop-color="#e9be78" stop-opacity="0.24" />
+    </linearGradient>
+  </defs>
+
+  <!-- Semantic Layer 1: Outer Vinyl Platter Ring -->
+  <g id="mark-vinyl-group" transform="translate(128, 120)">
+    <circle id="mark-ring-outer" cx="0" cy="0" r="68" stroke="url(#sonicAccentGrad)" stroke-width="3" stroke-linecap="round" />
+    <circle id="mark-disc-fill" cx="0" cy="0" r="62" fill="#141822" />
+    <circle id="mark-disc-sheen" cx="0" cy="0" r="62" fill="url(#sonicDiscSheen)" />
+    <circle id="mark-groove-1" cx="0" cy="0" r="50" stroke="#f2ede4" stroke-opacity="0.22" stroke-width="1.2" stroke-dasharray="140 24 80 18" />
+    <circle id="mark-groove-2" cx="0" cy="0" r="38" stroke="#f2ede4" stroke-opacity="0.28" stroke-width="1.2" stroke-dasharray="95 20 65 22" />
+    <circle id="mark-label-core" cx="0" cy="0" r="22" fill="url(#sonicAccentGrad)" />
+    <circle id="mark-spindle" cx="0" cy="0" r="5.5" fill="#0f1218" />
+    <!-- Tonearm Mark -->
+    <g id="mark-tonearm" transform="translate(52, -52)">
+      <circle cx="0" cy="0" r="6" fill="#27272a" stroke="#e9be78" stroke-width="1.8" />
+      <path d="M 0 0 L -8 46 L -18 58" stroke="#f2ede4" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" />
+      <rect x="-24" y="54" width="10" height="14" rx="2.5" transform="rotate(24 -19 61)" fill="#d96236" />
+    </g>
+  </g>
+
+  <!-- Semantic Layer 2: Audio Waveform Motif -->
+  <g id="mark-wave-bars" transform="translate(226, 98)">
+    <rect id="wave-bar-1" x="0" y="16" width="5" height="18" rx="2.5" fill="#e9be78" />
+    <rect id="wave-bar-2" x="10" y="8" width="5" height="34" rx="2.5" fill="#d96236" />
+    <rect id="wave-bar-3" x="20" y="2" width="5" height="46" rx="2.5" fill="#f2ede4" />
+    <rect id="wave-bar-4" x="30" y="10" width="5" height="30" rx="2.5" fill="#e9be78" />
+    <rect id="wave-bar-5" x="40" y="18" width="5" height="14" rx="2.5" fill="#d96236" />
+  </g>
+
+  <!-- Semantic Layer 3: Editorial Wordmark -->
+  <g id="wordmark-group">
+    <text id="wordmark-cn" x="292" y="114" fill="#f5f0e8" font-family="'Noto Serif SC', 'Songti SC', Georgia, serif" font-size="44" font-weight="700" letter-spacing="8">音画</text>
+    <line id="wordmark-rule" x1="292" y1="131" x2="564" y2="131" stroke="url(#sonicAccentGrad)" stroke-width="1.5" stroke-opacity="0.65" />
+    <text id="wordmark-en" x="292" y="158" fill="#e9be78" font-family="'SFMono-Regular', Consolas, monospace" font-size="16" font-weight="600" letter-spacing="6">SONIC ARCHIVE</text>
+  </g>
+</svg>

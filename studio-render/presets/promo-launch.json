@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "1.0",
+  "durationSec": 6,
+  "fps": 30,
+  "headline": "把每一首歌，制成可流动的实体唱片画报",
+  "subline": "无需外接视频大模型 · 确定性代码驱动导出",
+  "song": {
+    "id": "promo-theme",
+    "title": "Sonic Archive Launch",
+    "bpm": 96,
+    "chordFreqs": [196, 246.94, 293.66, 369.99, 440]
+  }
+}

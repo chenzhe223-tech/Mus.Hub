@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>音画 · 9:16 歌词音乐短视频</title>
+  <script src="/node_modules/gsap/dist/gsap.min.js"></script>
+  <script src="/core/hyper-runtime.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 1080px;
+      height: 1920px;
+      overflow: hidden;
+      background: #0c0f16;
+      font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+      color: #f5f0e8;
+    }
+    .stage {
+      position: relative;
+      width: 1080px;
+      height: 1920px;
+      overflow: hidden;
+    }
+    #bgCanvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+    .inset-frame {
+      position: absolute;
+      inset: 34px;
+      border: 1.5px solid rgba(242, 237, 228, 0.14);
+      border-radius: 24px;
+      pointer-events: none;
+    }
+    .scene {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 96px 76px;
+      opacity: 0;
+    }
+    .masthead {
+      position: absolute;
+      top: 66px;
+      left: 76px;
+      right: 76px;
+      display: flex;
+      justify-content: space-between;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 20px;
+      letter-spacing: 3px;
+      opacity: 0.78;
+      border-bottom: 1px solid rgba(242, 237, 228, 0.14);
+      padding-bottom: 18px;
+    }
+    /* Scene 1: Brand SVG */
+    #scene-intro svg { width: 760px; height: auto; }
+    .intro-sub {
+      margin-top: 28px;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 22px;
+      letter-spacing: 6px;
+      opacity: 0.72;
+    }
+    /* Scene 2: Hero Vinyl + Cover */
+    .hero-wrap {
+      position: relative;
+      width: 780px;
+      height: 540px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      margin-bottom: 64px;
+    }
+    .vinyl-disc {
+      position: absolute;
+      right: 12px;
+      width: 470px;
+      height: 470px;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle, transparent 34%, rgba(255,255,255,0.06) 35%, transparent 36%, rgba(255,255,255,0.05) 48%, transparent 49%, rgba(255,255,255,0.05) 62%, transparent 63%),
+        radial-gradient(circle, #181c26 0%, #090b10 72%);
+      box-shadow: 0 32px 72px rgba(0, 0, 0, 0.65);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .vinyl-core {
+      width: 170px;
+      height: 170px;
+      border-radius: 50%;
+      background-size: cover;
+      background-position: center;
+      border: 3px solid rgba(255, 255, 255, 0.25);
+      position: relative;
+    }
+    .vinyl-core::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 18px;
+      height: 18px;
+      transform: translate(-50%, -50%);
+      border-radius: 50%;
+      background: #0c0f16;
+    }
+    .sleeve-card {
+      position: relative;
+      width: 500px;
+      height: 500px;
+      border-radius: 28px;
+      overflow: hidden;
+      box-shadow: 0 36px 80px rgba(0, 0, 0, 0.62);
+      border: 2px solid rgba(255, 255, 255, 0.22);
+      z-index: 2;
+    }
+    .sleeve-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform-origin: center;
+    }
+    .sleeve-sweep {
+      position: absolute;
+      inset: -40%;
+      background: linear-gradient(120deg, transparent 35%, rgba(255,255,255,0.22) 50%, transparent 65%);
+      transform: translateX(-80%);
+      pointer-events: none;
+    }
+    .track-meta {
+      width: 100%;
+      text-align: left;
+    }
+    .track-tag {
+      display: inline-block;
+      padding: 8px 18px;
+      border-radius: 999px;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 18px;
+      letter-spacing: 3px;
+      margin-bottom: 24px;
+      background: rgba(233, 190, 120, 0.16);
+      border: 1px solid rgba(233, 190, 120, 0.45);
+      color: #e9be78;
+    }
+    .track-title {
+      font-family: "Noto Serif SC", "Songti SC", Georgia, serif;
+      font-size: 68px;
+      font-weight: 700;
+      line-height: 1.2;
+      margin-bottom: 18px;
+    }
+    .track-artist {
+      font-size: 32px;
+      opacity: 0.78;
+      margin-bottom: 48px;
+    }
+    #waveCanvas {
+      width: 100%;
+      height: 110px;
+    }
+    /* Scene 3: Kinetic Lyrics */
+    .lyric-stage {
+      width: 100%;
+      text-align: left;
+      padding-left: 28px;
+      border-left: 6px solid #d96236;
+    }
+    .lyric-kicker {
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 20px;
+      letter-spacing: 4px;
+      color: #e9be78;
+      margin-bottom: 36px;
+    }
+    .lyric-line {
+      font-family: "Noto Serif SC", "Songti SC", Georgia, serif;
+      font-size: 56px;
+      font-weight: 600;
+      line-height: 1.5;
+      margin-bottom: 32px;
+      opacity: 0.25;
+      transform: translateY(24px);
+    }
+    /* Scene 4: Outro Collector Card */
+    .outro-card {
+      width: 820px;
+      border-radius: 36px;
+      padding: 56px;
+      background: rgba(20, 24, 34, 0.82);
+      border: 2px solid rgba(233, 190, 120, 0.35);
+      box-shadow: 0 36px 90px rgba(0, 0, 0, 0.65);
+      text-align: center;
+    }
+    .outro-cover {
+      width: 340px;
+      height: 340px;
+      border-radius: 24px;
+      object-fit: cover;
+      margin: 0 auto 36px;
+      display: block;
+      box-shadow: 0 24px 50px rgba(0, 0, 0, 0.55);
+    }
+    .outro-quote {
+      font-family: "Noto Serif SC", "Songti SC", Georgia, serif;
+      font-size: 38px;
+      line-height: 1.55;
+      margin-bottom: 36px;
+    }
+    .outro-badge {
+      display: inline-block;
+      padding: 14px 32px;
+      border-radius: 999px;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 22px;
+      letter-spacing: 3px;
+      background: #e9be78;
+      color: #141822;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+  <div
+    class="stage"
+    data-composition-id="sonic-music-short-mv"
+    data-width="1080"
+    data-height="1920"
+    data-duration="15"
+    data-fps="30"
+  >
+    <canvas id="bgCanvas" width="1080" height="1920"></canvas>
+    <div class="inset-frame"></div>
+    <div class="masthead">
+      <span>SONIC ARCHIVE / SIDE A</span>
+      <span id="mastheadTime">00:00 / 00:15</span>
+    </div>
+
+    <!-- Scene 1: Pixel2Motion Brand Intro -->
+    <section id="scene-intro" class="scene">
+      <div id="logoMount"></div>
+      <div class="intro-sub">CODE-DRIVEN MUSIC ARCHIVE</div>
+    </section>
+
+    <!-- Scene 2: Vinyl Plinth + Waveform -->
+    <section id="scene-hero" class="scene">
+      <div class="hero-wrap">
+        <div id="vinylDisc" class="vinyl-disc">
+          <div id="vinylCore" class="vinyl-core"></div>
+        </div>
+        <div class="sleeve-card">
+          <img id="sleeveImg" class="sleeve-img" alt="cover" />
+          <div id="sleeveSweep" class="sleeve-sweep"></div>
+        </div>
+      </div>
+      <div class="track-meta">
+        <div id="trackTag" class="track-tag">33⅓ RPM · STEREO EDITION</div>
+        <h1 id="trackTitle" class="track-title">午夜霓虹</h1>
+        <div id="trackArtist" class="track-artist">SONIC ARCHIVE</div>
+        <canvas id="waveCanvas" width="928" height="110"></canvas>
+      </div>
+    </section>
+
+    <!-- Scene 3: Kinetic Lyrics -->
+    <section id="scene-lyrics" class="scene">
+      <div class="lyric-stage">
+        <div class="lyric-kicker">LYRIC SPOTLIGHT · 歌词金句</div>
+        <div id="lyricLinesWrap"></div>
+      </div>
+    </section>
+
+    <!-- Scene 4: Collector Outro -->
+    <section id="scene-outro" class="scene">
+      <div class="outro-card">
+        <img id="outroCover" class="outro-cover" alt="cover" />
+        <div id="outroQuote" class="outro-quote">“把喜欢的旋律，印成一张永不褪色的唱片。”</div>
+        <div class="outro-badge" id="outroBadge">音画 · SONIC ARCHIVE</div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    (async function boot() {
+      const vars = window.getHyperVars();
+      const song = vars.song || {
+        title: '午夜霓虹',
+        artist: '陈粒 · Midnight',
+        album: 'Midnight Session',
+        lyric: '风穿过城市的缝隙，耳机里正好响起那句旧词。',
+        cover: '',
+        bpm: 88,
+      };
+      const pal = vars.palette || {
+        bg1: '#0f1218',
+        bg2: '#1b2333',
+        accent: '#e9be78',
+        accent2: '#d96236',
+        text: '#f5f0e8',
+        muted: '#a8a29e',
+      };
+      const duration = Number(vars.durationSec || 15);
+      document.querySelector('[data-composition-id]').setAttribute('data-duration', String(duration));
+
+      // Fallback SVG cover if none provided
+      const fallbackSvg = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="${pal.bg2}"/><stop offset="60%" stop-color="${pal.accent}"/><stop offset="100%" stop-color="${pal.bg1}"/></linearGradient></defs><rect width="800" height="800" fill="url(#g)"/><circle cx="400" cy="400" r="190" fill="none" stroke="#fff" stroke-opacity="0.25" stroke-width="3"/><circle cx="400" cy="400" r="80" fill="#fff" fill-opacity="0.18"/></svg>`
+      );
+      const coverUrl = song.cover || fallbackSvg;
+
+      // Mount inline Pixel2Motion SVG logo
+      const svgText = await fetch('/assets/sonic-logo.svg').then((r) => r.text());
+      document.getElementById('logoMount').innerHTML = svgText;
+
+      document.getElementById('sleeveImg').src = coverUrl;
+      document.getElementById('outroCover').src = coverUrl;
+      document.getElementById('vinylCore').style.backgroundImage = `url("${coverUrl}")`;
+      document.getElementById('trackTitle').textContent = song.title;
+      document.getElementById('trackArtist').textContent = `${song.artist} · ${song.album || 'Single'}`;
+      const mainQuote = (vars.config && vars.config.lyric) || song.lyric || '把喜欢的旋律留给今晚。';
+      document.getElementById('outroQuote').textContent = `“${mainQuote}”`;
+      document.getElementById('trackTag').style.color = pal.accent;
+      document.getElementById('outroBadge').style.background = pal.accent;
+
+      const lines = (Array.isArray(vars.lyricsLines) && vars.lyricsLines.length >= 2)
+        ? vars.lyricsLines.slice(0, 3)
+        : [mainQuote, `${song.title} — ${song.artist}`, '每一段旋律都值得被好好装裱。'];
+      const wrap = document.getElementById('lyricLinesWrap');
+      wrap.innerHTML = lines.map((l, idx) => `<div class="lyric-line" id="ll-${idx}">${l}</div>`).join('');
+
+      // GSAP paused timeline mapped strictly to duration
+      const tl = gsap.timeline({ paused: true });
+      const scale = duration / 15;
+      const S = (sec) => sec * scale;
+
+      // Scene 1: Brand SVG
+      tl.set('#scene-intro', { opacity: 1 }, 0)
+        .fromTo('#mark-ring-outer', { strokeDasharray: 440, strokeDashoffset: 440 }, { strokeDashoffset: 0, duration: S(1.1), ease: 'power3.out' }, 0)
+        .from('#mark-tonearm', { rotation: -24, transformOrigin: '52px -52px', opacity: 0, duration: S(0.8), ease: 'back.out(1.4)' }, S(0.35))
+        .from('#mark-wave-bars rect', { scaleY: 0.1, transformOrigin: 'bottom center', opacity: 0, stagger: S(0.08), duration: S(0.5), ease: 'power2.out' }, S(0.45))
+        .from('#wordmark-cn, #wordmark-en, #wordmark-rule', { y: 18, opacity: 0, stagger: S(0.1), duration: S(0.7), ease: 'power3.out' }, S(0.55))
+        .to('#scene-intro', { opacity: 0, y: -30, duration: S(0.55), ease: 'power2.in' }, S(2.1));
+
+      // Scene 2: Hero Vinyl & 2.5D Sweep
+      tl.fromTo('#scene-hero', { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: S(0.7), ease: 'power3.out' }, S(2.35))
+        .from('#vinylDisc', { x: -120, opacity: 0, duration: S(0.9), ease: 'power3.out' }, S(2.5))
+        .to('#sleeveSweep', { x: '130%', duration: S(2.2), ease: 'sine.inOut' }, S(3.3))
+        .to('#scene-hero', { opacity: 0, y: -30, duration: S(0.55), ease: 'power2.in' }, S(7.5));
+
+      // Scene 3: Kinetic Lyrics
+      tl.fromTo('#scene-lyrics', { opacity: 0 }, { opacity: 1, duration: S(0.55), ease: 'power2.out' }, S(7.8))
+        .to('.lyric-line', { opacity: 1, y: 0, stagger: S(1.1), duration: S(0.75), ease: 'power3.out' }, S(8.1))
+        .to('#scene-lyrics', { opacity: 0, y: -24, duration: S(0.55), ease: 'power2.in' }, S(12.2));
+
+      // Scene 4: Collector Outro
+      tl.fromTo('#scene-outro', { opacity: 0, scale: 0.94 }, { opacity: 1, scale: 1, duration: S(0.75), ease: 'power3.out' }, S(12.45));
+
+      const bgCanvas = document.getElementById('bgCanvas');
+      const bgCtx = bgCanvas.getContext('2d');
+      const waveCanvas = document.getElementById('waveCanvas');
+      const waveCtx = waveCanvas.getContext('2d');
+
+      function formatSec(s) {
+        const m = String(Math.floor(s / 60)).padStart(2, '0');
+        const r = String(Math.floor(s % 60)).padStart(2, '0');
+        return `${m}:${r}`;
+      }
+
+      function onFrame(tSec) {
+        document.getElementById('mastheadTime').textContent = `${formatSec(tSec)} / ${formatSec(duration)}`;
+
+        // Spin vinyl continuously & 2.5D breathing sleeve
+        const disc = document.getElementById('vinylDisc');
+        disc.style.transform = `rotate(${tSec * 48}deg)`;
+        const sleeve = document.getElementById('sleeveImg');
+        const zoom = 1.03 + Math.sin(tSec * 0.7) * 0.02;
+        sleeve.style.transform = `scale(${zoom}) translateX(${Math.sin(tSec * 0.5) * 6}px)`;
+
+        // Deterministic ambient backdrop + bokeh
+        const g = bgCtx.createLinearGradient(0, 0, 320, 1920);
+        g.addColorStop(0, pal.bg1);
+        g.addColorStop(1, pal.bg2);
+        bgCtx.fillStyle = g;
+        bgCtx.fillRect(0, 0, 1080, 1920);
+
+        const ox = 320 + Math.sin(tSec * 0.45) * 140;
+        const oy = 480 + Math.cos(tSec * 0.35) * 120;
+        const rg = bgCtx.createRadialGradient(ox, oy, 20, ox, oy, 760);
+        rg.addColorStop(0, pal.accent + '36');
+        rg.addColorStop(1, 'rgba(0,0,0,0)');
+        bgCtx.fillStyle = rg;
+        bgCtx.fillRect(0, 0, 1080, 1920);
+
+        for (let p = 0; p < 16; p++) {
+          const px = (p * 113 + tSec * (18 + (p % 4) * 7)) % 1080;
+          const py = (((p * 179 - tSec * (14 + (p % 3) * 6)) % 1920) + 1920) % 1920;
+          bgCtx.beginPath();
+          bgCtx.arc(px, py, 2.4 + (p % 3) * 1.5, 0, Math.PI * 2);
+          bgCtx.fillStyle = 'rgba(255,255,255,0.22)';
+          bgCtx.fill();
+        }
+
+        // Deterministic waveform
+        waveCtx.clearRect(0, 0, 928, 110);
+        const bars = 42;
+        const gap = 8;
+        const bw = (928 - (bars - 1) * gap) / bars;
+        for (let i = 0; i < bars; i++) {
+          const w1 = Math.sin(i * 0.45 + tSec * 5.2) * 0.5 + 0.5;
+          const w2 = Math.cos(i * 0.25 - tSec * 3.8) * 0.5 + 0.5;
+          const env = Math.sin((i / (bars - 1)) * Math.PI);
+          const bh = Math.max(10, (0.2 + 0.8 * w1 * w2) * (0.4 + 0.6 * env) * 96);
+          waveCtx.fillStyle = i < bars * 0.55 ? pal.accent : 'rgba(255,255,255,0.25)';
+          waveCtx.beginPath();
+          waveCtx.roundRect(i * (bw + gap), (110 - bh) / 2, bw, bh, bw / 2);
+          waveCtx.fill();
+        }
+      }
+
+      window.registerHyperComposition({
+        id: 'sonic-music-short-mv',
+        timeline: tl,
+        onFrame,
+      });
+    })();
+  </script>
+</body>
+</html>

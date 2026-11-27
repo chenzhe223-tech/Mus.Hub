@@ -1,4 +1,9 @@
 import type { Song } from '../types';
+import {
+  computeSyntheticBars,
+  formatSecondsMMSS,
+  parseDurationTextToSec,
+} from './deterministicMotion';
 
 /**
  * Builds ordered playback candidates optimized for iOS Safari / WeChat WebKit / Android & Desktop:
@@ -349,6 +354,108 @@ class SparkAudioEngine {
     }
   }
 
+  /**
+   * Decodes a real song track (or synthesizes curated warm chords via OfflineAudioContext)
+   * into a deterministic AudioBuffer for zero-drop offline WebCodecs MP4 encoding.
+   */
+  async decodeExportAudioBuffer(
+    song: Song,
+    durationSec: number
+  ): Promise<{ buffer: AudioBuffer | null; hasRealTrackAudio: boolean }> {
+    const isCuratedDemo = song.id.startsWith('curated-') && !song.previewUrl;
+    if (isCuratedDemo) {
+      try {
+        const OfflineCtx =
+          window.OfflineAudioContext ||
+          (window as unknown as { webkitOfflineAudioContext?: typeof OfflineAudioContext })
+            .webkitOfflineAudioContext;
+        if (!OfflineCtx) return { buffer: null, hasRealTrackAudio: false };
+        const sampleRate = 44100;
+        const offCtx = new OfflineCtx(2, Math.ceil(durationSec * sampleRate), sampleRate);
+        const master = offCtx.createGain();
+        master.gain.value = 0.72;
+        master.connect(offCtx.destination);
+
+        const freqs = song.chordFreqs || [220, 261.63, 329.63, 392.0, 493.88];
+        const progression = [1, 0.8909, 1.1225, 0.9438];
+        const stepInterval = 2.4;
+        const steps = Math.ceil(durationSec / stepInterval);
+
+        for (let step = 0; step < steps; step++) {
+          const phraseStart = step * stepInterval;
+          const shift = progression[step % progression.length];
+          freqs.forEach((baseFreq, idx) => {
+            const f = baseFreq * shift;
+            const osc = offCtx.createOscillator();
+            const subOsc = offCtx.createOscillator();
+            const filter = offCtx.createBiquadFilter();
+            const gain = offCtx.createGain();
+
+            osc.type = idx === 0 ? 'sine' : 'triangle';
+            subOsc.type = 'sine';
+            osc.frequency.setValueAtTime(f, phraseStart);
+            subOsc.frequency.setValueAtTime(f * 0.5, phraseStart);
+
+            filter.type = 'lowpass';
+            filter.frequency.setValueAtTime(1400, phraseStart);
+            filter.frequency.exponentialRampToValueAtTime(520, phraseStart + 2.3);
+
+            const start = phraseStart + idx * 0.11;
+            if (start >= durationSec) return;
+            gain.gain.setValueAtTime(0.0001, start);
+            gain.gain.exponentialRampToValueAtTime(idx === 0 ? 0.11 : 0.065, start + 0.22);
+            gain.gain.exponentialRampToValueAtTime(0.0001, Math.min(durationSec, start + 2.55));
+
+            osc.connect(filter);
+            subOsc.connect(filter);
+            filter.connect(gain);
+            gain.connect(master);
+
+            osc.start(start);
+            subOsc.start(start);
+            osc.stop(Math.min(durationSec + 0.05, start + 2.65));
+            subOsc.stop(Math.min(durationSec + 0.05, start + 2.65));
+          });
+        }
+
+        const rendered = await offCtx.startRendering();
+        return { buffer: rendered, hasRealTrackAudio: true };
+      } catch {
+        return { buffer: null, hasRealTrackAudio: false };
+      }
+    }
+
+    const ctx = this.ensureContext();
+    if (!ctx) return { buffer: null, hasRealTrackAudio: false };
+
+    const candidates = buildAudioCandidates(song).filter(
+      (u) => u.startsWith('/') || u.startsWith('blob:') || u.startsWith('data:')
+    );
+
+    for (const url of candidates) {
+      try {
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), 14000);
+        let arrayBuf: ArrayBuffer;
+        try {
+          const res = await fetch(url, { signal: controller.signal });
+          if (!res.ok) continue;
+          arrayBuf = await res.arrayBuffer();
+        } finally {
+          window.clearTimeout(timer);
+        }
+
+        if (arrayBuf.byteLength < 2048) continue;
+        const decoded = await ctx.decodeAudioData(arrayBuf.slice(0));
+        return { buffer: decoded, hasRealTrackAudio: true };
+      } catch {
+        // Try next candidate
+      }
+    }
+
+    return { buffer: null, hasRealTrackAudio: false };
+  }
+
   getPlaybackProgress(durationText?: string): { progress: number; currentLabel: string } {
     if (
       this.playing &&
@@ -383,24 +490,16 @@ class SparkAudioEngine {
   }
 
   private parseDurationText(txt: string): number {
-    const parts = txt.split(':').map((n) => parseInt(n, 10));
-    if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
-      return Math.max(30, parts[0] * 60 + parts[1]);
-    }
-    return 225;
+    return parseDurationTextToSec(txt);
   }
 
   private formatSeconds(sec: number): string {
-    const s = Math.max(0, Math.floor(sec));
-    const m = String(Math.floor(s / 60)).padStart(2, '0');
-    const r = String(s % 60).padStart(2, '0');
-    return `${m}:${r}`;
+    return formatSecondsMMSS(sec);
   }
 
   getFrequencyBars(barCount: number, t: number, dynamic: boolean): number[] {
-    const result: number[] = new Array(barCount);
-
     if (this.playing && this.mode === 'synth' && this.analyser) {
+      const result: number[] = new Array(barCount);
       const freqData = new Uint8Array(this.analyser.frequencyBinCount);
       this.analyser.getByteFrequencyData(freqData);
       let energy = 0;
@@ -421,19 +520,7 @@ class SparkAudioEngine {
       this.playing && this.mode === 'track' && this.nativeAudio && !this.nativeAudio.paused
         ? this.nativeAudio.currentTime * 1.85
         : t;
-    const phase = dynamic ? activeTime * (this.playing ? 5.2 : 2.3) : 1.15;
-    const beatPulse = this.playing ? 0.8 + 0.25 * Math.abs(Math.sin(phase * 0.65)) : 0.72;
-
-    for (let i = 0; i < barCount; i++) {
-      const w1 = Math.sin(i * 0.48 + phase) * 0.5 + 0.5;
-      const w2 = Math.cos(i * 0.27 - phase * 0.78) * 0.5 + 0.5;
-      const env = Math.sin((i / Math.max(1, barCount - 1)) * Math.PI);
-      result[i] = Math.min(
-        1,
-        Math.max(0.1, (0.18 + 0.82 * w1 * w2) * (0.45 + 0.55 * env) * beatPulse)
-      );
-    }
-    return result;
+    return computeSyntheticBars(barCount, activeTime, dynamic, this.playing);
   }
 
   private playWarmSynthPhrase(freqs: number[]): void {

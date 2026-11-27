@@ -1,5 +1,35 @@
 export type PosterMode = 'dynamic' | 'static';
 
+export type ProductionMode = 'poster' | 'lyric-mv' | 'promo';
+
+export type PromoThemeStyle = 'darkroom' | 'warm-film' | 'editorial' | 'neon';
+
+export type PromoDirectionId = 'smart' | 'single-review' | 'story-emotion' | 'brand-feature';
+
+export interface PromoHighlightCard {
+  title: string;
+  sub: string;
+  tag: string;
+}
+
+export interface PromoPlan {
+  direction: PromoDirectionId;
+  themeStyle: PromoThemeStyle;
+  badgeText: string;
+  s1Headline: string;
+  s1Subline: string;
+  s1Slogan: string;
+  s2Heading: string;
+  s2VisualMode: 'templates' | 'custom-images';
+  s3Heading: string;
+  s3Kicker: string;
+  s3Highlights: [PromoHighlightCard, PromoHighlightCard, PromoHighlightCard];
+  s4Headline: string;
+  s4Subline: string;
+  s4Cta: string;
+  customImages: string[];
+}
+
 export type TemplateId =
   | 'vinyl'
   | 'polaroid'
@@ -62,6 +92,7 @@ export interface Song {
 
 export interface PosterConfig {
   mode: PosterMode;
+  productionMode?: ProductionMode;
   template: TemplateId;
   ratio: RatioId;
   paletteKey: PaletteKey;

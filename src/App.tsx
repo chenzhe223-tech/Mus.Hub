@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Disc3, Library, Mic, Moon, Radio, SlidersHorizontal, Sun, Wand2 } from 'lucide-react';
+import { Library, Mic, Moon, Radio, SlidersHorizontal, Sun, Wand2 } from 'lucide-react';
+import { BrandMotionBadge } from './components/BrandMotionBadge';
 import type {
   AppTab,
   DraftItem,
@@ -79,6 +80,8 @@ export default function App() {
     open: boolean;
     previewImgUrl: string | null;
     videoBlobUrl: string | null;
+    videoExt?: 'mp4' | 'webm';
+    encoderMode?: 'webcodecs' | 'mediarecorder';
   }>({
     open: false,
     previewImgUrl: null,
@@ -156,7 +159,7 @@ export default function App() {
   const handleToggleTheme = (next: UiTheme) => {
     if (next === theme) return;
     setTheme(next);
-    showToast(next === 'light' ? '已切换至「日光唱片」明亮模式' : '已切换至「黑胶暗房」深色模式');
+    showToast(next === 'light' ? '已切换至「日光唱片」明亮模式' : '已切换至「夜色黑胶」深色模式');
   };
 
   const handleSelectSong = (nextSong: Song, autoPlay = false) => {
@@ -326,21 +329,7 @@ export default function App() {
             onClick={() => setActiveTab('studio')}
             className="flex items-center gap-3 text-left group shrink-0"
           >
-            <div className="w-9 h-9 rounded-full border border-[var(--accent-border)] bg-[var(--bg-panel)] flex items-center justify-center relative">
-              <Disc3
-                className={`w-5 h-5 text-[var(--accent)] ${
-                  isPlaying
-                    ? 'animate-spin'
-                    : 'group-hover:rotate-45 transition-transform duration-500'
-                }`}
-                style={{ animationDuration: '5s' }}
-              />
-              <span
-                className={`w-1.5 h-1.5 rounded-full absolute -top-0.5 -right-0.5 ${
-                  isPlaying ? 'bg-[var(--heart)]' : 'bg-[var(--ink-muted)]'
-                }`}
-              />
-            </div>
+            <BrandMotionBadge isPlaying={isPlaying} size={38} />
             <div className="leading-tight">
               <div className="flex items-baseline gap-2">
                 <span className="font-editorial text-lg font-semibold tracking-wide text-[var(--ink-primary)]">
@@ -439,10 +428,10 @@ export default function App() {
                     ? 'bg-[var(--bg-elevated)] text-[var(--accent)] shadow-sm'
                     : 'text-[var(--ink-muted)] hover:text-[var(--ink-primary)]'
                 }`}
-                title="黑胶暗房（深邃质感）"
+                title="夜色黑胶（深邃质感）"
               >
                 <Moon className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">暗房</span>
+                <span className="hidden sm:inline">夜色</span>
               </button>
             </div>
 
@@ -484,8 +473,14 @@ export default function App() {
                 if (!res.ok && res.message) showToast(res.message);
               });
             }}
-            onOpenShare={(pngUrl, videoUrl) =>
-              setShareModal({ open: true, previewImgUrl: pngUrl, videoBlobUrl: videoUrl || null })
+            onOpenShare={(pngUrl, videoUrl, videoMeta) =>
+              setShareModal({
+                open: true,
+                previewImgUrl: pngUrl,
+                videoBlobUrl: videoUrl || null,
+                videoExt: videoMeta?.ext,
+                encoderMode: videoMeta?.encoderMode,
+              })
             }
             onOpenPublish={(pngUrl) => setPublishModal({ open: true, previewUrl: pngUrl })}
             onOpenRecognize={() => setRecognizeOpen(true)}
@@ -595,6 +590,8 @@ export default function App() {
         lyric={config.lyric}
         previewImgUrl={shareModal.previewImgUrl}
         videoBlobUrl={shareModal.videoBlobUrl}
+        videoExt={shareModal.videoExt}
+        encoderMode={shareModal.encoderMode}
         shareUrl={studioShareUrl}
         onClose={() => setShareModal((prev) => ({ ...prev, open: false }))}
         onSavePng={handleDownloadFromShareModal}

@@ -1,0 +1,19 @@
+{
+  "name": "sonic-studio-render",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local deterministic video & dynamic poster factory (HyperFrames Render Contract + Lemo-Opuscar + Pixel2Motion)",
+  "scripts": {
+    "render:mv": "node core/render-video.mjs --template templates/music-short-mv.html --vars presets/demo-song-project.json --out out/demo-mv-9x16.mp4",
+    "render:promo": "node core/render-video.mjs --template templates/product-promo.html --vars presets/promo-launch.json --out out/product-promo-9x16.mp4",
+    "render:batch": "node core/batch-render.mjs --manifest presets/batch-manifest.json",
+    "qa": "node core/qa-probe.mjs"
+  },
+  "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@ffprobe-installer/ffprobe": "^2.1.2",
+    "gsap": "^3.12.7",
+    "playwright-core": "^1.51.1"
+  }
+}

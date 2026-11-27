@@ -8,6 +8,7 @@ import {
   Edit3,
   ExternalLink,
   Film,
+  FileCode2,
   FileText,
   Headphones,
   Loader2,
@@ -27,7 +28,18 @@ import {
   Wand2,
   X,
 } from 'lucide-react';
-import type { FontStyleId, Palette, PaletteKey, PosterConfig, RatioId, Song, TemplateId } from '../types';
+import type {
+  FontStyleId,
+  Palette,
+  PaletteKey,
+  PosterConfig,
+  ProductionMode,
+  PromoDirectionId,
+  PromoPlan,
+  RatioId,
+  Song,
+  TemplateId,
+} from '../types';
 import {
   CURATED_SONGS,
   FONT_STYLES,
@@ -36,9 +48,13 @@ import {
   TEMPLATES,
 } from '../data/curated';
 import { PosterCanvas } from './PosterCanvas';
+import { TimelineInspectorBar } from './TimelineInspectorBar';
+import { PromoPlannerPanel } from './PromoPlannerPanel';
+import { generateSmartPromoPlan } from '../utils/promoPlanner';
 import { withAlpha } from '../utils/color';
 import {
   exportPosterPng,
+  exportStudioProjectBundle,
   isMobileOrInAppBrowser,
   recordDynamicVideoWithAudio,
 } from '../utils/exporter';
@@ -64,7 +80,11 @@ interface StudioViewProps {
   onUpdateConfig: (patch: Partial<PosterConfig>) => void;
   onPaletteExtracted: (palette: Palette) => void;
   onToggleAudio: () => void;
-  onOpenShare: (pngUrl: string | null, videoUrl?: string | null) => void;
+  onOpenShare: (
+    pngUrl: string | null,
+    videoUrl?: string | null,
+    videoMeta?: { ext: 'mp4' | 'webm'; encoderMode: 'webcodecs' | 'mediarecorder' }
+  ) => void;
   onOpenPublish: (pngUrl: string | null) => void;
   onOpenRecognize: () => void;
   onOpenAiVoice: () => void;
@@ -106,7 +126,7 @@ const SOURCE_LABELS: Record<NonNullable<Song['source']>, string> = {
   'ai-voice': 'AI声纹',
 };
 
-type ControlSubTab = 'style' | 'music' | 'details';
+type ControlSubTab = 'style' | 'music' | 'details' | 'promo';
 
 export const StudioView: React.FC<StudioViewProps> = ({
   song,
@@ -129,6 +149,7 @@ export const StudioView: React.FC<StudioViewProps> = ({
   showToast,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const coverImageRef = useRef<HTMLImageElement | null>(null);
   const tracklistRef = useRef<HTMLDivElement | null>(null);
   const hasAutoLoadedRef = useRef(false);
   const [subTab, setSubTab] = useState<ControlSubTab>('style');
@@ -143,10 +164,27 @@ export const StudioView: React.FC<StudioViewProps> = ({
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordPercent, setRecordPercent] = useState(0);
+  const [recordDurationSec, setRecordDurationSec] = useState<5 | 6 | 10 | 15>(5);
+  const [directorPlaying, setDirectorPlaying] = useState(true);
+  const [playbackRate, setPlaybackRate] = useState<number>(1);
+  const [scrubTimeSec, setScrubTimeSec] = useState<number | null>(null);
+  const [inspectorTimeSec, setInspectorTimeSec] = useState(0);
+  const productionMode: ProductionMode = config.productionMode || 'poster';
   const [editingMeta, setEditingMeta] = useState(false);
   const [lyricsLines, setLyricsLines] = useState<string[]>([]);
   const [lyricsLoading, setLyricsLoading] = useState(false);
   const [lyricsFetchedFor, setLyricsFetchedFor] = useState<string>('');
+  const [promoPlan, setPromoPlan] = useState<PromoPlan>(() =>
+    generateSmartPromoPlan(song, config, [])
+  );
+
+  // Automatically re-plan smart promo when song changes while preserving user-uploaded images & chosen direction
+  useEffect(() => {
+    setPromoPlan((prev) =>
+      generateSmartPromoPlan(song, config, lyricsLines, prev.direction, prev.customImages)
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [song.id, song.title, song.artist]);
 
   const shareUrl = useMemo(
     () => buildShareUrl(song, config, authorName),
@@ -380,33 +418,124 @@ export const StudioView: React.FC<StudioViewProps> = ({
     }
   };
 
+  const handleSwitchProductionMode = (nextMode: ProductionMode) => {
+    if (isRecording) return;
+    onUpdateConfig({ productionMode: nextMode, mode: 'dynamic' });
+    setScrubTimeSec(null);
+    setInspectorTimeSec(0);
+    setDirectorPlaying(true);
+    if (nextMode === 'promo') {
+      setRecordDurationSec(6);
+      setSubTab('promo');
+      if (config.ratio !== '9:16') onUpdateConfig({ productionMode: nextMode, mode: 'dynamic', ratio: '9:16' });
+    } else if (nextMode === 'lyric-mv') {
+      setRecordDurationSec(10);
+      if (subTab === 'promo') setSubTab('style');
+      if (config.ratio !== '9:16') onUpdateConfig({ productionMode: nextMode, mode: 'dynamic', ratio: '9:16' });
+    } else {
+      setRecordDurationSec(5);
+      if (subTab === 'promo') setSubTab('style');
+    }
+  };
+
+  const handleApplyPromoDirection = (direction: PromoDirectionId) => {
+    setPromoPlan((prev) =>
+      generateSmartPromoPlan(song, config, lyricsLines, direction, prev.customImages)
+    );
+    showToast('已按所选策划方向智能更新四幕文案');
+  };
+
+  const handleResetSmartPromo = () => {
+    setPromoPlan((prev) =>
+      generateSmartPromoPlan(song, config, lyricsLines, 'smart', prev.customImages)
+    );
+    showToast(`已为《${song.title}》智能匹配专属宣发策划`);
+  };
+
+  const handleDirectorTogglePlay = () => {
+    if (directorPlaying && scrubTimeSec === null) {
+      setScrubTimeSec(inspectorTimeSec);
+      setDirectorPlaying(false);
+    } else {
+      setScrubTimeSec(null);
+      setDirectorPlaying(true);
+    }
+  };
+
+  const handleDirectorSeek = (tSec: number) => {
+    const clamped = Math.max(0, Math.min(recordDurationSec, tSec));
+    setDirectorPlaying(false);
+    setScrubTimeSec(clamped);
+    setInspectorTimeSec(clamped);
+  };
+
+  const handleDirectorStepFrame = (deltaFrames: number) => {
+    const base = scrubTimeSec !== null ? scrubTimeSec : inspectorTimeSec;
+    const next = Math.max(0, Math.min(recordDurationSec, base + deltaFrames / 30));
+    setDirectorPlaying(false);
+    setScrubTimeSec(next);
+    setInspectorTimeSec(next);
+  };
+
   const handleRecordVideo = async () => {
     if (isRecording || !canvasRef.current) return;
     if (config.mode !== 'dynamic') {
       onUpdateConfig({ mode: 'dynamic' });
     }
+    setScrubTimeSec(null);
     setIsRecording(true);
     setRecordPercent(0);
     try {
       const result = await recordDynamicVideoWithAudio({
         canvas: canvasRef.current,
         song,
-        durationMs: 5000,
+        config,
+        palette: activePalette,
+        coverImage: coverImageRef.current,
+        productionMode,
+        promoPlan,
+        lyricsLines,
+        shareUrl,
+        durationMs: recordDurationSec * 1000,
+        fps: 30,
         onProgress: (pct) => setRecordPercent(pct),
       });
-      const pngUrl = exportPosterPng(canvasRef.current, song.title, false);
+      const pngUrl = result.posterDataUrl || exportPosterPng(canvasRef.current, song.title, false);
+      const modeTag = result.encoderMode === 'webcodecs' ? '逐帧真MP4' : result.ext.toUpperCase();
+      const label =
+        productionMode === 'promo'
+          ? '产品宣发短片'
+          : productionMode === 'lyric-mv'
+            ? '歌词短视频'
+            : '动态海报';
       showToast(
         result.hasAudio
-          ? `5秒有声动态海报（含真实歌曲音轨 · ${result.ext.toUpperCase()}）已导出`
-          : `5秒动态海报 (${result.ext.toUpperCase()}) 已导出（该曲目无可用原曲音轨，仅含画面）`
+          ? `${recordDurationSec}秒${label}（含真实音轨 · ${modeTag}）已导出`
+          : `${recordDurationSec}秒${label} (${modeTag}) 已导出（无可用原曲音轨，仅含画面）`
       );
-      onOpenShare(pngUrl, result.blobUrl);
+      onOpenShare(pngUrl, result.blobUrl, {
+        ext: result.ext,
+        encoderMode: result.encoderMode,
+      });
     } catch (err) {
       showToast(err instanceof Error ? err.message : '视频录制失败');
     } finally {
       setIsRecording(false);
       setRecordPercent(0);
     }
+  };
+
+  const handleExportProjectBundle = () => {
+    exportStudioProjectBundle({
+      song,
+      config,
+      palette: activePalette,
+      promoPlan,
+      lyricsLines,
+      shareUrl,
+      durationSec: recordDurationSec === 5 ? 15 : recordDurationSec,
+    });
+    showToast('已导出工程包 JSON，可直接送入 studio-render 渲染 1080p/60fps 短视频');
   };
 
   const capturePreviewUrl = (): string | null => {
@@ -501,16 +630,58 @@ export const StudioView: React.FC<StudioViewProps> = ({
             </div>
           </div>
 
+          {/* Production Mode Switcher (Poster / Lyric MV / Product Promo) */}
+          <div className="relative z-10 flex flex-wrap items-center justify-between gap-2 pb-3 mb-2">
+            <span className="font-tech text-[10px] tracking-wider text-[var(--ink-muted)]">
+              OUTPUT ENGINE · 成片形态
+            </span>
+            <div className="inline-flex p-0.5 rounded-lg hi-fi-inset">
+              {(
+                [
+                  { id: 'poster', label: '单卡海报' },
+                  { id: 'lyric-mv', label: '歌词短视频' },
+                  { id: 'promo', label: '产品宣发片' },
+                ] as const
+              ).map((item) => {
+                const active = productionMode === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    disabled={isRecording}
+                    onClick={() => handleSwitchProductionMode(item.id)}
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition ${
+                      active
+                        ? 'bg-[var(--btn-primary-bg)] text-[var(--btn-primary-ink)]'
+                        : 'text-[var(--ink-secondary)] hover:text-[var(--ink-primary)]'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Poster Canvas Plinth */}
           <div className="relative z-10 flex items-center justify-center py-2">
             <PosterCanvas
               canvasRef={canvasRef}
+              coverImageRefOut={coverImageRef}
               song={song}
               config={config}
               palette={activePalette}
               shareUrl={shareUrl}
               isPlaying={isPlaying}
               isRecording={isRecording}
+              productionMode={productionMode}
+              promoPlan={promoPlan}
+              lyricsLines={lyricsLines}
+              durationSec={recordDurationSec}
+              directorPlaying={directorPlaying}
+              playbackRate={playbackRate}
+              scrubTimeSec={scrubTimeSec}
+              onTimeUpdate={setInspectorTimeSec}
               onPaletteExtracted={onPaletteExtracted}
               className="max-h-[46vh] sm:max-h-[56vh] lg:max-h-[63vh]"
             />
@@ -522,6 +693,21 @@ export const StudioView: React.FC<StudioViewProps> = ({
               </div>
             )}
           </div>
+
+          {productionMode !== 'poster' && (
+            <TimelineInspectorBar
+              mode={productionMode}
+              currentTimeSec={scrubTimeSec !== null ? scrubTimeSec : inspectorTimeSec}
+              durationSec={recordDurationSec}
+              isPlaying={directorPlaying && scrubTimeSec === null}
+              playbackRate={playbackRate}
+              disabled={isRecording}
+              onTogglePlay={handleDirectorTogglePlay}
+              onSeek={handleDirectorSeek}
+              onStepFrame={handleDirectorStepFrame}
+              onChangeRate={setPlaybackRate}
+            />
+          )}
 
           {/* Tactile Action Bar */}
           <div className="relative z-10 mt-5 pt-4 border-t border-[var(--line-subtle)] flex flex-wrap items-center justify-between gap-2.5">
@@ -536,14 +722,45 @@ export const StudioView: React.FC<StudioViewProps> = ({
                 <span>导出 PNG</span>
               </button>
 
+              <div className="inline-flex items-center rounded-lg border border-[var(--accent-border)] bg-[var(--bg-panel)] overflow-hidden">
+                <button
+                  type="button"
+                  disabled={isRecording}
+                  onClick={handleRecordVideo}
+                  className="inline-flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium hover:bg-[var(--bg-hover)] text-[var(--ink-primary)] transition disabled:opacity-40"
+                >
+                  <Clapperboard className="w-3.5 h-3.5 text-[var(--accent)]" />
+                  <span>{isRecording ? `导出 ${recordPercent}%` : '导出视频'}</span>
+                </button>
+                <div className="flex items-center border-l border-[var(--line-subtle)] px-1 gap-0.5">
+                  {([5, 6, 10, 15] as const).map((sec) => (
+                    <button
+                      key={sec}
+                      type="button"
+                      disabled={isRecording}
+                      onClick={() => setRecordDurationSec(sec)}
+                      className={`px-1.5 py-1 rounded text-[10px] font-tech transition ${
+                        recordDurationSec === sec
+                          ? 'bg-[var(--accent)] text-[var(--accent-ink)] font-semibold'
+                          : 'text-[var(--ink-muted)] hover:text-[var(--ink-primary)]'
+                      }`}
+                      title={`导出 ${sec} 秒有声动态视频`}
+                    >
+                      {sec}s
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <button
                 type="button"
                 disabled={isRecording}
-                onClick={handleRecordVideo}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-lg text-xs font-medium bg-[var(--bg-panel)] hover:bg-[var(--bg-hover)] text-[var(--ink-primary)] border border-[var(--accent-border)] transition disabled:opacity-40"
+                onClick={handleExportProjectBundle}
+                className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-lg text-xs font-medium bg-transparent hover:bg-[var(--bg-hover)] text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] border border-[var(--line-subtle)] transition disabled:opacity-40"
+                title="导出工程 JSON 至 studio-render 本地 1080p/60fps 多镜头工厂"
               >
-                <Clapperboard className="w-3.5 h-3.5 text-[var(--accent)]" />
-                <span>{isRecording ? `录制 ${recordPercent}%` : '录制有声视频'}</span>
+                <FileCode2 className="w-3.5 h-3.5 text-[var(--accent)]" />
+                <span className="hidden sm:inline">工程包</span>
               </button>
 
               <button
@@ -586,28 +803,34 @@ export const StudioView: React.FC<StudioViewProps> = ({
       {/* Left Column: Tactile Console Deck */}
       <section className="order-2 lg:order-1 lg:col-span-5 xl:col-span-5 space-y-4">
         {/* Console Mode Tabs */}
-        <div className="hi-fi-panel rounded-xl p-1 grid grid-cols-3 gap-1">
+        <div className="hi-fi-panel rounded-xl p-1 grid grid-cols-4 gap-1">
           {[
-            { id: 'style' as const, code: 'A', label: '版式与色调' },
-            { id: 'music' as const, code: 'B', label: '选曲与音源' },
-            { id: 'details' as const, code: 'C', label: '文案与细节' },
+            { id: 'style' as const, code: 'A', label: '版式' },
+            { id: 'music' as const, code: 'B', label: '选曲' },
+            { id: 'details' as const, code: 'C', label: '文案' },
+            { id: 'promo' as const, code: 'D', label: '宣发策划' },
           ].map((tab) => {
             const active = subTab === tab.id;
             return (
               <button
                 key={tab.id}
                 type="button"
-                onClick={() => setSubTab(tab.id)}
-                className={`flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-xs font-medium transition ${
+                onClick={() => {
+                  setSubTab(tab.id);
+                  if (tab.id === 'promo' && productionMode !== 'promo') {
+                    handleSwitchProductionMode('promo');
+                  }
+                }}
+                className={`flex items-center justify-center gap-1 py-2.5 px-1 rounded-lg text-xs font-medium transition ${
                   active
                     ? 'bg-[var(--bg-elevated)] text-[var(--ink-primary)] border border-[var(--accent-border)]'
                     : 'text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] border border-transparent'
                 }`}
               >
                 <span className="font-tech text-[10px] text-[var(--accent)]">{tab.code}</span>
-                <span>{tab.label}</span>
+                <span className="truncate">{tab.label}</span>
                 {tab.id === 'music' && songs.length > 6 && (
-                  <span className="font-tech text-[9px] px-1 py-0.2 rounded bg-[var(--accent-soft)] text-[var(--accent)]">
+                  <span className="font-tech text-[9px] px-1 py-0.2 rounded bg-[var(--accent-soft)] text-[var(--accent)] hidden sm:inline">
                     {songs.length}
                   </span>
                 )}
@@ -615,6 +838,17 @@ export const StudioView: React.FC<StudioViewProps> = ({
             );
           })}
         </div>
+
+        {/* PANEL D: BESPOKE PROMO PLANNER */}
+        {subTab === 'promo' && (
+          <PromoPlannerPanel
+            plan={promoPlan}
+            onChangePlan={setPromoPlan}
+            onApplyDirection={handleApplyPromoDirection}
+            onResetSmart={handleResetSmartPromo}
+            showToast={showToast}
+          />
+        )}
 
         {/* PANEL A: STYLE & TEMPLATES */}
         {subTab === 'style' && (

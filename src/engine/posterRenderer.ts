@@ -3,6 +3,21 @@ import { FONT_STYLES, RATIOS } from '../data/curated';
 import { withAlpha } from '../utils/color';
 import { drawScannableQr } from '../utils/qr';
 import { audioEngine } from '../utils/audioEngine';
+import { formatSecondsMMSS, mulberry32, parseDurationTextToSec } from '../utils/deterministicMotion';
+import { wrapCanvasLines } from '../utils/textWrap';
+
+export interface DeterministicFrameContext {
+  /** Exact timeline timestamp in seconds (0-based) for frame-accurate rendering */
+  tSec: number;
+  /** Precomputed normalized spectrum bars (0..1) */
+  bars?: number[];
+  /** Normalized progress bar ratio (0..1) */
+  progress?: number;
+  /** Explicit current time label (e.g. "00:08") */
+  currentLabel?: string;
+  /** Fixed Polaroid date stamp to guarantee pixel invariance across days */
+  dateLabel?: string;
+}
 
 export interface RenderPosterParams {
   ctx: CanvasRenderingContext2D;
@@ -15,9 +30,10 @@ export interface RenderPosterParams {
   nowMs: number;
   startMs: number;
   isPlaying: boolean;
+  deterministic?: DeterministicFrameContext;
 }
 
-// Cached analog film grain pattern (fast 60fps overlay)
+// Cached deterministic analog film grain pattern (seeded PRNG — 100% reproducible across renders)
 let cachedGrainPattern: CanvasPattern | null = null;
 
 function getGrainPattern(ctx: CanvasRenderingContext2D): CanvasPattern | null {
@@ -30,12 +46,13 @@ function getGrainPattern(ctx: CanvasRenderingContext2D): CanvasPattern | null {
     if (!gctx) return null;
     const img = gctx.createImageData(160, 160);
     const d = img.data;
+    const rand = mulberry32(0x504e4943);
     for (let i = 0; i < d.length; i += 4) {
-      const v = Math.random() > 0.5 ? 255 : 0;
+      const v = rand() > 0.5 ? 255 : 0;
       d[i] = v;
       d[i + 1] = v;
       d[i + 2] = v;
-      d[i + 3] = Math.floor(Math.random() * 16);
+      d[i + 3] = Math.floor(rand() * 16);
     }
     gctx.putImageData(img, 0, 0);
     cachedGrainPattern = ctx.createPattern(g, 'repeat');
@@ -75,7 +92,8 @@ function drawCoverArt(
   y: number,
   w: number,
   h: number,
-  radius: number
+  radius: number,
+  motion?: { scale?: number; panX?: number; panY?: number }
 ) {
   ctx.save();
   drawRoundedRect(ctx, x, y, w, h, radius);
@@ -84,10 +102,13 @@ function drawCoverArt(
   if (coverImage && coverImage.naturalWidth > 0) {
     const iw = coverImage.naturalWidth;
     const ih = coverImage.naturalHeight;
-    const scale = Math.max(w / iw, h / ih);
+    const zoom = motion?.scale ?? 1;
+    const scale = Math.max(w / iw, h / ih) * zoom;
     const dw = iw * scale;
     const dh = ih * scale;
-    ctx.drawImage(coverImage, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+    const panX = motion?.panX ?? 0;
+    const panY = motion?.panY ?? 0;
+    ctx.drawImage(coverImage, x + (w - dw) / 2 + panX, y + (h - dh) / 2 + panY, dw, dh);
   } else {
     const grad = ctx.createLinearGradient(x, y, x + w, y + h);
     grad.addColorStop(0, palette.bg2);
@@ -104,45 +125,44 @@ function drawCoverArt(
   ctx.restore();
 }
 
+/**
+ * Pure-code diagonal specular light sweep (no external vision model required).
+ */
+function drawDynamicLightSweep(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  radius: number,
+  t: number,
+  dynamic: boolean,
+  intensity = 0.14
+) {
+  if (!dynamic) return;
+  const cycle = ((t * 0.24) % 1 + 1) % 1;
+  const sweepCenter = -0.45 + cycle * 1.9;
+  const x0 = x + w * (sweepCenter - 0.28);
+  const x1 = x + w * (sweepCenter + 0.28);
+  ctx.save();
+  drawRoundedRect(ctx, x, y, w, h, radius);
+  ctx.clip();
+  const sheen = ctx.createLinearGradient(x0, y, x1, y + h);
+  sheen.addColorStop(0, 'rgba(255,255,255,0)');
+  sheen.addColorStop(0.5, `rgba(255,255,255,${intensity})`);
+  sheen.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = sheen;
+  ctx.fillRect(x, y, w, h);
+  ctx.restore();
+}
+
 function measureWrappedLines(
   ctx: CanvasRenderingContext2D,
   text: string,
   maxWidth: number,
   maxLines: number
 ): string[] {
-  if (!text) return [];
-  const chars = Array.from(text);
-  const lines: string[] = [];
-  let current = '';
-
-  for (let i = 0; i < chars.length; i++) {
-    const ch = chars[i];
-    if (ch === '\n') {
-      lines.push(current);
-      current = '';
-      if (lines.length >= maxLines) break;
-      continue;
-    }
-    const test = current + ch;
-    if (ctx.measureText(test).width > maxWidth && current.length > 0) {
-      lines.push(current);
-      current = ch;
-      if (lines.length >= maxLines) break;
-    } else {
-      current = test;
-    }
-  }
-  if (current && lines.length < maxLines) {
-    lines.push(current);
-  }
-  if (lines.length === maxLines) {
-    const usedLen = lines.join('').length;
-    if (usedLen < text.replace(/\n/g, '').length) {
-      const last = lines[maxLines - 1];
-      lines[maxLines - 1] = last.slice(0, Math.max(1, last.length - 1)) + '…';
-    }
-  }
-  return lines;
+  return wrapCanvasLines(ctx, text, maxWidth, maxLines);
 }
 
 function drawWaveform(
@@ -153,10 +173,23 @@ function drawWaveform(
   h: number,
   t: number,
   dynamic: boolean,
-  pal: Palette
+  pal: Palette,
+  deterministic?: DeterministicFrameContext
 ) {
   const barCount = Math.max(24, Math.min(40, Math.floor(w / 18)));
-  const bars = audioEngine.getFrequencyBars(barCount, t, dynamic);
+  let bars: number[];
+  if (deterministic?.bars && deterministic.bars.length > 0) {
+    bars = new Array(barCount);
+    for (let i = 0; i < barCount; i++) {
+      const srcIdx = Math.min(
+        deterministic.bars.length - 1,
+        Math.floor((i / barCount) * deterministic.bars.length)
+      );
+      bars[i] = deterministic.bars[srcIdx];
+    }
+  } else {
+    bars = audioEngine.getFrequencyBars(barCount, t, dynamic);
+  }
   const gap = 5;
   const barW = Math.max(3, (w - (barCount - 1) * gap) / barCount);
 
@@ -185,9 +218,27 @@ function drawProgressBar(
   w: number,
   durationText: string,
   pal: Palette,
-  fontBody: string
+  fontBody: string,
+  deterministic?: DeterministicFrameContext
 ) {
-  const { progress, currentLabel } = audioEngine.getPlaybackProgress(durationText);
+  let progress: number;
+  let currentLabel: string;
+  if (deterministic) {
+    const totalSec = parseDurationTextToSec(durationText || '03:45');
+    if (typeof deterministic.progress === 'number') {
+      progress = Math.min(0.98, Math.max(0.02, deterministic.progress));
+    } else {
+      const curSec = (totalSec * 0.25 + deterministic.tSec) % totalSec;
+      progress = curSec / totalSec;
+    }
+    currentLabel =
+      deterministic.currentLabel ||
+      formatSecondsMMSS((totalSec * 0.25 + deterministic.tSec) % totalSec);
+  } else {
+    const live = audioEngine.getPlaybackProgress(durationText);
+    progress = live.progress;
+    currentLabel = live.currentLabel;
+  }
   ctx.save();
   ctx.fillStyle = pal.light ? 'rgba(28, 25, 23, 0.14)' : 'rgba(255, 255, 255, 0.18)';
   drawRoundedRect(ctx, x, y, w, 6, 3);
@@ -283,7 +334,19 @@ function drawAmbientBackdrop(
  * Dynamically allocates hero, typography, and footer zones so 1:1 / 3:4 / 4:5 / 9:16 NEVER overlap.
  */
 export function renderPoster(params: RenderPosterParams): void {
-  const { ctx, canvas, song, config, palette: pal, coverImage, shareUrl, nowMs, startMs, isPlaying } = params;
+  const {
+    ctx,
+    canvas,
+    song,
+    config,
+    palette: pal,
+    coverImage,
+    shareUrl,
+    nowMs,
+    startMs,
+    isPlaying,
+    deterministic,
+  } = params;
   const dim = RATIOS[config.ratio] || RATIOS['3:4'];
   if (canvas.width !== dim.w || canvas.height !== dim.h) {
     canvas.width = dim.w;
@@ -295,7 +358,7 @@ export function renderPoster(params: RenderPosterParams): void {
   const isCompact = H <= 1040; // 1:1 square mode
   const isTall = H / W >= 1.65; // 9:16 story mode
   const dynamic = config.mode === 'dynamic';
-  const t = dynamic ? (nowMs - startMs) / 1000 : 0;
+  const t = deterministic ? (dynamic ? deterministic.tSec : 0) : dynamic ? (nowMs - startMs) / 1000 : 0;
   const fonts = getFontSpec(config.fontStyle);
 
   const padX = isTall ? 54 : 64;
@@ -306,7 +369,22 @@ export function renderPoster(params: RenderPosterParams): void {
 
   // Special full-bleed layout for Magazine template
   if (config.template === 'magazine') {
-    renderMagazineTemplate(ctx, W, H, padX, innerW, song, config, pal, coverImage, shareUrl, t, dynamic, fonts);
+    renderMagazineTemplate(
+      ctx,
+      W,
+      H,
+      padX,
+      innerW,
+      song,
+      config,
+      pal,
+      coverImage,
+      shareUrl,
+      t,
+      dynamic,
+      fonts,
+      deterministic
+    );
     applyAtmosphereFinish(ctx, W, H, t, pal, dynamic, config.filmGrain);
     return;
   }
@@ -372,15 +450,28 @@ export function renderPoster(params: RenderPosterParams): void {
 
   // Step 5: Draw Template Hero inside [heroTopY, heroTopY + heroMaxH]
   if (config.template === 'vinyl') {
-    drawVinylHero(ctx, W, padX, innerW, heroTopY, heroMaxH, t, isPlaying, pal, coverImage);
+    drawVinylHero(ctx, W, padX, innerW, heroTopY, heroMaxH, t, dynamic, isPlaying, pal, coverImage);
   } else if (config.template === 'polaroid') {
-    drawPolaroidHero(ctx, W, innerW, heroTopY, heroMaxH, t, dynamic, pal, coverImage, song, fonts.bodyFont);
+    drawPolaroidHero(
+      ctx,
+      W,
+      innerW,
+      heroTopY,
+      heroMaxH,
+      t,
+      dynamic,
+      pal,
+      coverImage,
+      song,
+      fonts.bodyFont,
+      deterministic?.dateLabel
+    );
   } else if (config.template === 'glass') {
-    drawGlassHero(ctx, W, innerW, heroTopY, heroMaxH, t, dynamic, isPlaying, pal, coverImage);
+    drawGlassHero(ctx, W, innerW, heroTopY, heroMaxH, t, dynamic, isPlaying, pal, coverImage, deterministic);
   } else if (config.template === 'cassette') {
-    drawCassetteHero(ctx, W, innerW, heroTopY, heroMaxH, t, isPlaying, pal, coverImage, song);
+    drawCassetteHero(ctx, W, innerW, heroTopY, heroMaxH, t, dynamic, isPlaying, pal, coverImage, song);
   } else if (config.template === 'cd') {
-    drawCdJewelHero(ctx, W, innerW, heroTopY, heroMaxH, t, isPlaying, pal, coverImage, song);
+    drawCdJewelHero(ctx, W, innerW, heroTopY, heroMaxH, t, dynamic, isPlaying, pal, coverImage, song);
   }
 
   // Step 6: Draw Song Title, Artist & Lyric Quote cleanly at textTopY
@@ -420,13 +511,13 @@ export function renderPoster(params: RenderPosterParams): void {
   const leftAreaW = config.showQr ? innerW - qrSize - 26 : innerW;
 
   if (config.showProgress) {
-    drawProgressBar(ctx, padX, footerBottomY - 32, leftAreaW, song.duration, pal, fonts.bodyFont);
+    drawProgressBar(ctx, padX, footerBottomY - 32, leftAreaW, song.duration, pal, fonts.bodyFont, deterministic);
   }
   if (config.showWave) {
     const waveY = config.showProgress
       ? footerBottomY - 32 - waveProgressGap - waveH
       : footerBottomY - waveH - 6;
-    drawWaveform(ctx, padX, waveY, leftAreaW, waveH, t, dynamic, pal);
+    drawWaveform(ctx, padX, waveY, leftAreaW, waveH, t, dynamic, pal, deterministic);
   }
   if (config.showQr) {
     const qrX = W - padX - qrSize;
@@ -455,6 +546,7 @@ function drawVinylHero(
   heroTopY: number,
   heroMaxH: number,
   t: number,
+  dynamic: boolean,
   isPlaying: boolean,
   pal: Palette,
   coverImage: HTMLImageElement | null
@@ -462,11 +554,12 @@ function drawVinylHero(
   const sleeveSize = Math.min(innerW * 0.64, heroMaxH * 0.92);
   const totalGroupW = sleeveSize * 1.44;
   const sleeveX = Math.max(padX, (W - totalGroupW) / 2);
-  const sleeveY = heroTopY + (heroMaxH - sleeveSize) / 2;
+  const floatOffset = dynamic ? Math.sin(t * 0.9) * 3.5 : 0;
+  const sleeveY = heroTopY + (heroMaxH - sleeveSize) / 2 + floatOffset;
 
   const discR = sleeveSize * 0.475;
-  const discCx = sleeveX + sleeveSize * 0.96;
-  const discCy = sleeveY + sleeveSize * 0.5;
+  const discCx = sleeveX + sleeveSize * 0.96 + (dynamic ? Math.sin(t * 0.65) * 4 : 0);
+  const discCy = sleeveY + sleeveSize * 0.5 - floatOffset * 0.5;
 
   // Spinning Vinyl Disc
   ctx.save();
@@ -523,7 +616,7 @@ function drawVinylHero(
   const pivotY = sleeveY + 18;
   ctx.save();
   ctx.translate(pivotX, pivotY);
-  const armAngle = isPlaying ? 0.38 : 0.26;
+  const armAngle = (isPlaying ? 0.38 : 0.26) + (dynamic ? Math.sin(t * 1.1) * 0.014 : 0);
   ctx.rotate(armAngle);
   ctx.strokeStyle = '#d4d4d8';
   ctx.lineWidth = 5;
@@ -551,13 +644,24 @@ function drawVinylHero(
   ctx.stroke();
   ctx.restore();
 
-  // Sleeve cover with depth shadow
+  // Sleeve cover with depth shadow & 2.5D Ken Burns + specular sweep
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.55)';
   ctx.shadowBlur = 44;
   ctx.shadowOffsetY = 18;
-  drawCoverArt(ctx, coverImage, pal, sleeveX, sleeveY, sleeveSize, sleeveSize, 20);
+  drawCoverArt(
+    ctx,
+    coverImage,
+    pal,
+    sleeveX,
+    sleeveY,
+    sleeveSize,
+    sleeveSize,
+    20,
+    dynamic ? { scale: 1.03 + Math.sin(t * 0.55) * 0.015, panX: Math.sin(t * 0.4) * 4 } : undefined
+  );
   ctx.restore();
+  drawDynamicLightSweep(ctx, sleeveX, sleeveY, sleeveSize, sleeveSize, 20, t, dynamic, 0.13);
 
   ctx.save();
   drawRoundedRect(ctx, sleeveX, sleeveY, sleeveSize, sleeveSize, 20);
@@ -581,12 +685,13 @@ function drawPolaroidHero(
   pal: Palette,
   coverImage: HTMLImageElement | null,
   song: Song,
-  fontBody: string
+  fontBody: string,
+  fixedDateLabel?: string
 ) {
   const frameH = Math.min(heroMaxH * 0.94, innerW * 0.92);
   const frameW = Math.min(innerW * 0.84, frameH * 0.84);
   const cx = W / 2;
-  const cy = heroTopY + heroMaxH / 2;
+  const cy = heroTopY + heroMaxH / 2 + (dynamic ? Math.sin(t * 0.85) * 4 : 0);
   const tilt = dynamic ? Math.sin(t * 0.7) * 0.025 - 0.025 : -0.028;
 
   ctx.save();
@@ -615,7 +720,18 @@ function drawPolaroidHero(
   const imgSize = frameW - pad * 2;
   const imgX = -frameW / 2 + pad;
   const imgY = -frameH / 2 + pad;
-  drawCoverArt(ctx, coverImage, pal, imgX, imgY, imgSize, imgSize, 4);
+  drawCoverArt(
+    ctx,
+    coverImage,
+    pal,
+    imgX,
+    imgY,
+    imgSize,
+    imgSize,
+    4,
+    dynamic ? { scale: 1.035 + Math.sin(t * 0.5) * 0.015, panX: Math.sin(t * 0.45) * 5 } : undefined
+  );
+  drawDynamicLightSweep(ctx, imgX, imgY, imgSize, imgSize, 4, t, dynamic, 0.14);
 
   // Warm analog film light leak overlay
   const leak = ctx.createLinearGradient(imgX, imgY, imgX + imgSize, imgY + imgSize);
@@ -629,8 +745,11 @@ function drawPolaroidHero(
   ctx.font = '600 16px "SFMono-Regular", Consolas, monospace';
   ctx.fillStyle = 'rgba(251, 146, 60, 0.92)';
   ctx.textAlign = 'right';
-  const today = new Date();
-  const dateLabel = `'${String(today.getFullYear()).slice(2)} ${String(today.getMonth() + 1).padStart(2, '0')} ${String(today.getDate()).padStart(2, '0')}`;
+  let dateLabel = fixedDateLabel;
+  if (!dateLabel) {
+    const today = new Date();
+    dateLabel = `'${String(today.getFullYear()).slice(2)} ${String(today.getMonth() + 1).padStart(2, '0')} ${String(today.getDate()).padStart(2, '0')}`;
+  }
   ctx.fillText(dateLabel, imgX + imgSize - 14, imgY + imgSize - 14);
 
   // Polaroid bottom chin caption
@@ -660,7 +779,8 @@ function drawGlassHero(
   dynamic: boolean,
   isPlaying: boolean,
   pal: Palette,
-  coverImage: HTMLImageElement | null
+  coverImage: HTMLImageElement | null,
+  deterministic?: DeterministicFrameContext
 ) {
   const cx = W / 2;
   const cy = heroTopY + heroMaxH / 2;
@@ -669,8 +789,10 @@ function drawGlassHero(
   const floatY = dynamic ? Math.sin(t * 1.6) * 7 : 0;
 
   // Audio-reactive luminous halo rings
-  const bars = audioEngine.getFrequencyBars(8, t, dynamic);
-  const bassEnergy = (bars[1] + bars[2]) * 0.5;
+  const bars = deterministic?.bars?.length
+    ? deterministic.bars
+    : audioEngine.getFrequencyBars(8, t, dynamic);
+  const bassEnergy = ((bars[1] ?? 0.4) + (bars[2] ?? 0.4)) * 0.5;
   for (let i = 1; i <= 3; i++) {
     const pulse = dynamic ? Math.sin(t * 2.1 - i * 0.9) * 10 + (isPlaying ? bassEnergy * 24 : 0) : 0;
     ctx.save();
@@ -699,15 +821,26 @@ function drawGlassHero(
   ctx.stroke();
   ctx.restore();
 
-  // Elevated Cover inside Glass
-  const covX = cx - coverSize / 2;
-  const covY = cy - coverSize / 2 + floatY;
+  // Elevated Cover inside Glass (independent 2.5D depth parallax relative to outer glass frame)
+  const covX = cx - coverSize / 2 + (dynamic ? Math.cos(t * 0.8) * 3 : 0);
+  const covY = cy - coverSize / 2 + floatY * 1.35;
   ctx.save();
   ctx.shadowColor = withAlpha(pal.accent, 0.45);
   ctx.shadowBlur = 42;
   ctx.shadowOffsetY = 14;
-  drawCoverArt(ctx, coverImage, pal, covX, covY, coverSize, coverSize, 26);
+  drawCoverArt(
+    ctx,
+    coverImage,
+    pal,
+    covX,
+    covY,
+    coverSize,
+    coverSize,
+    26,
+    dynamic ? { scale: 1.04 + Math.sin(t * 0.55) * 0.015 } : undefined
+  );
   ctx.restore();
+  drawDynamicLightSweep(ctx, covX, covY, coverSize, coverSize, 26, t, dynamic, 0.16);
 
   // Top-left glass gloss reflection
   ctx.save();
@@ -730,6 +863,7 @@ function drawCassetteHero(
   heroTopY: number,
   heroMaxH: number,
   t: number,
+  dynamic: boolean,
   isPlaying: boolean,
   pal: Palette,
   coverImage: HTMLImageElement | null,
@@ -738,7 +872,7 @@ function drawCassetteHero(
   const tapeW = Math.min(innerW * 0.95, heroMaxH / 0.63);
   const tapeH = tapeW * 0.63;
   const tapeX = (W - tapeW) / 2;
-  const tapeY = heroTopY + (heroMaxH - tapeH) / 2;
+  const tapeY = heroTopY + (heroMaxH - tapeH) / 2 + (dynamic ? Math.sin(t * 0.95) * 3 : 0);
 
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.58)';
@@ -860,6 +994,7 @@ function drawCdJewelHero(
   heroTopY: number,
   heroMaxH: number,
   t: number,
+  dynamic: boolean,
   isPlaying: boolean,
   pal: Palette,
   coverImage: HTMLImageElement | null,
@@ -868,10 +1003,10 @@ function drawCdJewelHero(
   const caseSize = Math.min(innerW * 0.64, heroMaxH * 0.9);
   const totalW = caseSize * 1.42;
   const caseX = (W - totalW) / 2;
-  const caseY = heroTopY + (heroMaxH - caseSize) / 2;
+  const caseY = heroTopY + (heroMaxH - caseSize) / 2 + (dynamic ? Math.sin(t * 0.9) * 3.5 : 0);
 
   const discR = caseSize * 0.46;
-  const discCx = caseX + caseSize * 0.94;
+  const discCx = caseX + caseSize * 0.94 + (dynamic ? Math.sin(t * 0.65) * 4 : 0);
   const discCy = caseY + caseSize * 0.5;
 
   // Spinning Iridescent Holographic CD Disc
@@ -956,9 +1091,19 @@ function drawCdJewelHero(
   const artY = caseY + 8;
   const artW = caseSize - spineW - 14;
   const artH = caseSize - 16;
-  drawCoverArt(ctx, coverImage, pal, artX, artY, artW, artH, 6);
+  drawCoverArt(
+    ctx,
+    coverImage,
+    pal,
+    artX,
+    artY,
+    artW,
+    artH,
+    6,
+    dynamic ? { scale: 1.03 + Math.sin(t * 0.5) * 0.015 } : undefined
+  );
 
-  // Diagonal Acrylic Glass Reflection + CD Sticker Badge
+  // Diagonal Acrylic Glass Reflection + Dynamic Specular Sweep
   ctx.save();
   drawRoundedRect(ctx, caseX, caseY, caseSize, caseSize, 14);
   ctx.clip();
@@ -971,6 +1116,7 @@ function drawCdJewelHero(
   ctx.fillStyle = shine;
   ctx.fillRect(caseX, caseY, caseSize, caseSize);
   ctx.restore();
+  drawDynamicLightSweep(ctx, caseX, caseY, caseSize, caseSize, 14, t, dynamic, 0.18);
 
   // Case crisp border
   ctx.save();
@@ -1008,17 +1154,35 @@ function renderMagazineTemplate(
   shareUrl: string,
   t: number,
   dynamic: boolean,
-  fonts: { titleFont: string; bodyFont: string }
+  fonts: { titleFont: string; bodyFont: string },
+  deterministic?: DeterministicFrameContext
 ) {
   const isCompact = H <= 1040;
   const margin = 38;
   const photoW = W - margin * 2;
   const photoH = H - margin * 2;
 
-  // Full-bleed Framed Magazine Cover Art
+  // Full-bleed Framed Magazine Cover Art with gentle Ken Burns 2.5D motion
   ctx.save();
-  drawCoverArt(ctx, coverImage, pal, margin, margin, photoW, photoH, 24);
+  drawCoverArt(
+    ctx,
+    coverImage,
+    pal,
+    margin,
+    margin,
+    photoW,
+    photoH,
+    24,
+    dynamic
+      ? {
+          scale: 1.035 + Math.sin(t * 0.45) * 0.02,
+          panX: Math.sin(t * 0.35) * 8,
+          panY: Math.cos(t * 0.3) * 6,
+        }
+      : undefined
+  );
   ctx.restore();
+  drawDynamicLightSweep(ctx, margin, margin, photoW, photoH, 24, t, dynamic, 0.1);
 
   // Editorial Dark/Tinted Scrim for ultra-legible typography
   ctx.save();
@@ -1071,12 +1235,12 @@ function renderMagazineTemplate(
   let bottomCursor = footerBottom;
   if (config.showProgress) {
     const magPal: Palette = { ...pal, text: '#ffffff', muted: '#e2e8f0', light: false };
-    drawProgressBar(ctx, padX + 4, bottomCursor - 30, leftW - 8, song.duration, magPal, fonts.bodyFont);
+    drawProgressBar(ctx, padX + 4, bottomCursor - 30, leftW - 8, song.duration, magPal, fonts.bodyFont, deterministic);
     bottomCursor -= 54;
   }
   if (config.showWave) {
     const magPal: Palette = { ...pal, text: '#ffffff', muted: '#e2e8f0', light: false };
-    drawWaveform(ctx, padX + 4, bottomCursor - 42, leftW - 8, 38, t, dynamic, magPal);
+    drawWaveform(ctx, padX + 4, bottomCursor - 42, leftW - 8, 38, t, dynamic, magPal, deterministic);
     bottomCursor -= 62;
   }
   if (config.showQr) {

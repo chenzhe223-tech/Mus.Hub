@@ -9,6 +9,8 @@ interface ShareModalProps {
   lyric: string;
   previewImgUrl: string | null;
   videoBlobUrl: string | null;
+  videoExt?: 'mp4' | 'webm';
+  encoderMode?: 'webcodecs' | 'mediarecorder';
   shareUrl: string;
   onClose: () => void;
   onSavePng: () => void;
@@ -22,6 +24,8 @@ export const ShareModal: React.FC<ShareModalProps> = ({
   lyric,
   previewImgUrl,
   videoBlobUrl,
+  videoExt = 'mp4',
+  encoderMode,
   shareUrl,
   onClose,
   onSavePng,
@@ -98,19 +102,21 @@ export const ShareModal: React.FC<ShareModalProps> = ({
             <div className="flex items-center justify-between text-xs text-[var(--accent)] font-medium">
               <span className="flex items-center gap-1.5">
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                有声动态海报已录制完成
+                有声动态视频已导出（{videoExt.toUpperCase()}
+                {encoderMode === 'webcodecs' ? ' · 逐帧无损编码' : ''}）
               </span>
               <a
                 href={videoBlobUrl}
-                download={`sonic-archive-motion-${(song.title || 'video').replace(/[^\w\u4e00-\u9fa5-]+/g, '_')}.webm`}
+                download={`sonic-archive-motion-${(song.title || 'video').replace(/[^\w\u4e00-\u9fa5-]+/g, '_')}.${videoExt}`}
                 className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-[var(--accent-soft)] border border-[var(--accent-border)] text-[11px] hover:bg-[var(--accent)] hover:text-[var(--accent-ink)] transition"
               >
                 <Download className="w-3 h-3" />
-                下载视频
+                下载视频 ({videoExt.toUpperCase()})
               </a>
             </div>
             <video
               src={videoBlobUrl}
+              poster={previewImgUrl || undefined}
               controls
               autoPlay
               loop

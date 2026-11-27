@@ -1,0 +1,61 @@
+{
+  "jobs": [
+    {
+      "id": "poster-midnight-3x4",
+      "template": "templates/dynamic-poster.html",
+      "out": "out/batch-midnight-3x4.mp4",
+      "duration": 4,
+      "fps": 30,
+      "gif": true,
+      "vars": {
+        "durationSec": 4,
+        "song": {
+          "title": "Blue Hour in Tokyo",
+          "artist": "Blue Hour Quartet",
+          "album": "Midnight Vinyl Press",
+          "bpm": 86,
+          "chordFreqs": [220, 261.63, 329.63, 392.0]
+        },
+        "config": {
+          "template": "vinyl",
+          "ratio": "3:4",
+          "lyric": "雨落在老唱片机旁，霓虹把整条巷子染成了琥珀色。"
+        },
+        "palette": {
+          "bg1": "#0f1218",
+          "bg2": "#1c2738",
+          "accent": "#e9be78",
+          "text": "#f5f0e8"
+        }
+      }
+    },
+    {
+      "id": "poster-sunset-1x1",
+      "template": "templates/dynamic-poster.html",
+      "out": "out/batch-sunset-1x1.mp4",
+      "duration": 4,
+      "fps": 30,
+      "vars": {
+        "durationSec": 4,
+        "song": {
+          "title": "落日海岸线",
+          "artist": "Amber Dusk",
+          "album": "Coastline Tape",
+          "bpm": 94,
+          "chordFreqs": [261.63, 329.63, 392.0, 493.88]
+        },
+        "config": {
+          "template": "polaroid",
+          "ratio": "1:1",
+          "lyric": "海平面的余晖慢了半拍，刚好留给这卷老胶片。"
+        },
+        "palette": {
+          "bg1": "#2b1812",
+          "bg2": "#7c3820",
+          "accent": "#f29954",
+          "text": "#fff6e6"
+        }
+      }
+    }
+  ]
+}
