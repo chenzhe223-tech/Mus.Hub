@@ -453,7 +453,7 @@ async function searchNetease(term: string, limit: number, offset = 0): Promise<U
 }
 
 function scoreTrackRelevance(track: UnifiedTrack, queryTerms: string[]): number {
-  let score = track.rawPreviewUrl ? 40 : 0;
+  let score = track.rawPreviewUrl ? 110 : 0;
   if (!queryTerms.length) return score;
 
   const queryHasCjk = queryTerms.some((q) => hasCjk(q));
@@ -955,18 +955,20 @@ async function resolveFreshPreviewUrl(
   // 2. Fallback: STRICT title + artist verified live search (NEVER plays a different song from the same album!)
   if (!resolved && title) {
     const target = { title, artist };
-    const expanded = expandMusicQuery(`${artist} ${title}`.trim());
-    const titleExpanded = expandMusicQuery(title);
+    const cleanTitle = title.replace(/\(.*?\)|（.*?）|\[.*?\]|【.*?】/g, '').trim() || title;
+    const expanded = expandMusicQuery(`${artist} ${cleanTitle}`.trim());
+    const titleExpanded = expandMusicQuery(cleanTitle);
 
     // Use `attribute=songTerm` on iTunes so searching "逆光" matches TRACK title "逆光", NOT other tracks in album《逆光》!
-    const [itTw, itHk, itCn, dzFresh] = await Promise.all([
+    const [itTw, itHk, itCn, dzFresh, dzByTitle] = await Promise.all([
       searchItunes(titleExpanded.traditional, expanded.isCjk ? 'TW' : 'US', 15, 0, 'songTerm'),
       expanded.isCjk ? searchItunes(titleExpanded.traditional, 'HK', 15, 0, 'songTerm') : Promise.resolve([]),
       expanded.isCjk ? searchItunes(titleExpanded.primary, 'CN', 15, 0, 'songTerm') : Promise.resolve([]),
       searchDeezer(expanded.englishAlias || expanded.traditional, 15),
+      expanded.isCjk ? searchDeezer(`${artist} ${cleanTitle}`.trim(), 12) : Promise.resolve([]),
     ]);
 
-    const allCandidates = [...itTw, ...itHk, ...itCn, ...dzFresh];
+    const allCandidates = [...itTw, ...itHk, ...itCn, ...dzFresh, ...dzByTitle];
     const strictHit = allCandidates.find(
       (t) => Boolean(t.rawPreviewUrl) && isStrictTrackMatch({ title: t.title, artist: t.artist }, target)
     );
@@ -1045,8 +1047,12 @@ async function handlePreviewStream(request: Request, url: URL): Promise<Response
       const v = upstream.headers.get(h);
       if (v) outHeaders.set(h, v);
     }
-    if (!outHeaders.has('content-type')) {
+    const rawCt = (outHeaders.get('content-type') || '').toLowerCase();
+    if (!rawCt) {
       outHeaders.set('content-type', resolvedUrl.includes('.m4a') ? 'audio/mp4' : 'audio/mpeg');
+    } else if (rawCt.includes('audio/x-m4p') || rawCt.includes('audio/x-m4a')) {
+      // Apple CDN sends `audio/x-m4p` even for DRM-free 30s AAC previews, which mobile WebKit/Android decoders can reject
+      outHeaders.set('content-type', 'audio/mp4');
     }
     if (!outHeaders.has('accept-ranges')) {
       outHeaders.set('accept-ranges', 'bytes');
@@ -1117,6 +1123,10 @@ async function handleProxy(request: Request, url: URL): Promise<Response> {
     for (const h of copyHeaders) {
       const v = upstream.headers.get(h);
       if (v) outHeaders.set(h, v);
+    }
+    const proxyCt = (outHeaders.get('content-type') || '').toLowerCase();
+    if (proxyCt.includes('audio/x-m4p') || proxyCt.includes('audio/x-m4a')) {
+      outHeaders.set('content-type', 'audio/mp4');
     }
     if (!outHeaders.has('accept-ranges')) {
       outHeaders.set('accept-ranges', 'bytes');

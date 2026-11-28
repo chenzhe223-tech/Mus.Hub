@@ -4,6 +4,7 @@ import {
   formatSecondsMMSS,
   parseDurationTextToSec,
 } from './deterministicMotion';
+import { resolvePreviewUrlViaJsonp } from './musicSearch';
 
 /**
  * Builds ordered playback candidates optimized for iOS Safari / WeChat WebKit / Android & Desktop:
@@ -12,7 +13,7 @@ import {
  *    within the first synchronous iOS tap gesture.
  * 3. Direct CDN URL & dynamic `/api/preview?title=...&artist=...` (even works for NetEase/QQ tracks that had `previewUrl: null`!).
  */
-function buildAudioCandidates(song: Song): string[] {
+function buildAudioCandidates(song: Song, mode: 'playback' | 'cors' = 'playback'): string[] {
   const previewUrl = song.previewUrl || '';
   if (previewUrl.startsWith('blob:') || previewUrl.startsWith('data:')) {
     return [previewUrl];
@@ -33,14 +34,12 @@ function buildAudioCandidates(song: Song): string[] {
         )}`
       : '';
 
-  // Already an evergreen /api/preview URL
   if (previewUrl.startsWith('/api/preview?')) {
     add(previewUrl);
     if (titleArtistFallback) add(titleArtistFallback);
     return list;
   }
 
-  // Upgrade Deezer tracks (including legacy saved/shared posts) to evergreen /api/preview
   const dzIdMatch = song.id.match(/^deezer-(?:chart-)?(\d+)$/);
   if (dzIdMatch && isHttpApp) {
     add(`/api/preview?deezerId=${dzIdMatch[1]}`);
@@ -63,8 +62,15 @@ function buildAudioCandidates(song: Song): string[] {
       proxyUrl = isHttpApp ? `/api/proxy?url=${encodeURIComponent(rawUrl)}` : rawUrl;
     }
 
-    add(proxyUrl);
-    add(rawUrl);
+    // For HTMLAudioElement playback, permanent Apple CDN URLs play far faster & avoid iOS gesture timeout
+    // when tried directly first; for WebAudio CORS fetch (`decodeAudioData`), always prefer `/api/proxy`.
+    if (mode === 'playback' && rawUrl.includes('itunes.apple.com')) {
+      add(rawUrl);
+      add(proxyUrl);
+    } else {
+      add(proxyUrl);
+      if (mode === 'playback') add(rawUrl);
+    }
   }
 
   if (titleArtistFallback) {
@@ -205,6 +211,14 @@ class SparkAudioEngine {
     return this.mode;
   }
 
+  /**
+   * Must be called synchronously inside a user tap/click handler BEFORE any `await`,
+   * so iOS Safari / WeChat WKWebView unlocks WebAudio for MediaStream recording & export.
+   */
+  unlockFromUserGesture(): void {
+    this.ensureContext();
+  }
+
   getAudioStream(): MediaStream | null {
     this.ensureContext();
     return this.streamDest ? this.streamDest.stream : null;
@@ -264,62 +278,85 @@ class SparkAudioEngine {
     const wasPlayingBefore = this.playing && this.currentSongId === song.id;
     this.stop(false);
 
-    const candidates = buildAudioCandidates(song).filter(
+    let candidates = buildAudioCandidates(song, 'cors').filter(
       (u) => u.startsWith('/') || u.startsWith('blob:') || u.startsWith('data:')
     );
 
-    for (const url of candidates) {
-      try {
-        const controller = new AbortController();
-        const timer = window.setTimeout(() => controller.abort(), 12000);
-        let arrayBuf: ArrayBuffer;
+    const tryDecodeCandidateList = async (urls: string[]) => {
+      for (const url of urls) {
         try {
-          const res = await fetch(url, { signal: controller.signal });
-          if (!res.ok) continue;
-          arrayBuf = await res.arrayBuffer();
-        } finally {
-          window.clearTimeout(timer);
+          const controller = new AbortController();
+          const timer = window.setTimeout(() => controller.abort(), 12000);
+          let arrayBuf: ArrayBuffer;
+          try {
+            const res = await fetch(url, { signal: controller.signal });
+            if (!res.ok) continue;
+            arrayBuf = await res.arrayBuffer();
+          } finally {
+            window.clearTimeout(timer);
+          }
+
+          if (arrayBuf.byteLength < 2048) continue;
+
+          const audioBuffer = await ctx.decodeAudioData(arrayBuf.slice(0));
+          const source = ctx.createBufferSource();
+          source.buffer = audioBuffer;
+          source.loop = true;
+
+          const gain = ctx.createGain();
+          gain.gain.value = 1.0;
+
+          source.connect(gain);
+          gain.connect(this.masterGain!);
+
+          const safeOffset =
+            audioBuffer.duration > 1 ? resumeOffsetSec % Math.max(1, audioBuffer.duration - 0.5) : 0;
+          source.start(0, safeOffset);
+
+          // Wait briefly so WebAudio render quantum feeds live PCM samples into MediaStreamDestination
+          // BEFORE MediaRecorder starts (prevents silent-audio-track race on iOS Safari AVAssetWriter!)
+          await new Promise<void>((r) => window.setTimeout(r, 120));
+
+          this.recBufferSource = source;
+          this.recGain = gain;
+          this.playing = true;
+          this.currentSongId = song.id;
+          this.mode = 'synth'; // Routes real decoded PCM energy through AnalyserNode -> live canvas spectrum!
+          this.startedAt = performance.now() - safeOffset * 1000;
+          this.emit();
+
+          return {
+            stream: this.streamDest!.stream,
+            hasRealTrackAudio: true,
+            cleanup: () => {
+              this.stopRecordingBuffer();
+              this.playing = false;
+              this.emit();
+              if (wasPlayingBefore) {
+                void this.play(song);
+              }
+            },
+          };
+        } catch {
+          // Try next same-origin candidate
         }
+      }
+      return null;
+    };
 
-        if (arrayBuf.byteLength < 2048) continue;
+    const firstPass = await tryDecodeCandidateList(candidates);
+    if (firstPass) return firstPass;
 
-        const audioBuffer = await ctx.decodeAudioData(arrayBuf.slice(0));
-        const source = ctx.createBufferSource();
-        source.buffer = audioBuffer;
-        source.loop = true;
-
-        const gain = ctx.createGain();
-        gain.gain.value = 1.0;
-
-        source.connect(gain);
-        gain.connect(this.masterGain);
-
-        const safeOffset =
-          audioBuffer.duration > 1 ? resumeOffsetSec % Math.max(1, audioBuffer.duration - 0.5) : 0;
-        source.start(0, safeOffset);
-
-        this.recBufferSource = source;
-        this.recGain = gain;
-        this.playing = true;
-        this.currentSongId = song.id;
-        this.mode = 'synth'; // Routes real decoded PCM energy through AnalyserNode -> live canvas spectrum!
-        this.startedAt = performance.now() - safeOffset * 1000;
-        this.emit();
-
-        return {
-          stream: this.streamDest.stream,
-          hasRealTrackAudio: true,
-          cleanup: () => {
-            this.stopRecordingBuffer();
-            this.playing = false;
-            this.emit();
-            if (wasPlayingBefore) {
-              void this.play(song);
-            }
-          },
-        };
-      } catch {
-        // Try next same-origin candidate
+    // On-demand browser JSONP preview rescue for NetEase/QQ/edge-throttled songs
+    if (!song.id.startsWith('curated-') && song.title) {
+      const rescuedUrl = await resolvePreviewUrlViaJsonp(song.title, song.artist || '');
+      if (rescuedUrl) {
+        song.previewUrl = rescuedUrl;
+        candidates = buildAudioCandidates(song, 'cors').filter(
+          (u) => u.startsWith('/') || u.startsWith('blob:') || u.startsWith('data:')
+        );
+        const secondPass = await tryDecodeCandidateList(candidates);
+        if (secondPass) return secondPass;
       }
     }
 
@@ -428,28 +465,48 @@ class SparkAudioEngine {
     const ctx = this.ensureContext();
     if (!ctx) return { buffer: null, hasRealTrackAudio: false };
 
-    const candidates = buildAudioCandidates(song).filter(
+    const tryDecodeUrls = async (urls: string[]): Promise<AudioBuffer | null> => {
+      for (const url of urls) {
+        try {
+          const controller = new AbortController();
+          const timer = window.setTimeout(() => controller.abort(), 14000);
+          let arrayBuf: ArrayBuffer;
+          try {
+            const res = await fetch(url, { signal: controller.signal });
+            if (!res.ok) continue;
+            arrayBuf = await res.arrayBuffer();
+          } finally {
+            window.clearTimeout(timer);
+          }
+
+          if (arrayBuf.byteLength < 2048) continue;
+          return await ctx.decodeAudioData(arrayBuf.slice(0));
+        } catch {
+          // Try next candidate
+        }
+      }
+      return null;
+    };
+
+    const corsCandidates = buildAudioCandidates(song, 'cors').filter(
       (u) => u.startsWith('/') || u.startsWith('blob:') || u.startsWith('data:')
     );
+    const decodedFirst = await tryDecodeUrls(corsCandidates);
+    if (decodedFirst) {
+      return { buffer: decodedFirst, hasRealTrackAudio: true };
+    }
 
-    for (const url of candidates) {
-      try {
-        const controller = new AbortController();
-        const timer = window.setTimeout(() => controller.abort(), 14000);
-        let arrayBuf: ArrayBuffer;
-        try {
-          const res = await fetch(url, { signal: controller.signal });
-          if (!res.ok) continue;
-          arrayBuf = await res.arrayBuffer();
-        } finally {
-          window.clearTimeout(timer);
+    if (!song.id.startsWith('curated-') && song.title) {
+      const rescuedUrl = await resolvePreviewUrlViaJsonp(song.title, song.artist || '');
+      if (rescuedUrl) {
+        song.previewUrl = rescuedUrl;
+        const rescuedCandidates = buildAudioCandidates(song, 'cors').filter(
+          (u) => u.startsWith('/') || u.startsWith('blob:') || u.startsWith('data:')
+        );
+        const decodedSecond = await tryDecodeUrls(rescuedCandidates);
+        if (decodedSecond) {
+          return { buffer: decodedSecond, hasRealTrackAudio: true };
         }
-
-        if (arrayBuf.byteLength < 2048) continue;
-        const decoded = await ctx.decodeAudioData(arrayBuf.slice(0));
-        return { buffer: decoded, hasRealTrackAudio: true };
-      } catch {
-        // Try next candidate
       }
     }
 
@@ -581,6 +638,7 @@ class SparkAudioEngine {
 
   async play(song: Song): Promise<AudioPlayResult> {
     this.stop(false);
+    this.unlockFromUserGesture();
     const seq = ++this.playSeq;
     this.currentSongId = song.id;
     this.startedAt = performance.now();
@@ -593,7 +651,7 @@ class SparkAudioEngine {
       return { ok: true, mode: 'synth' };
     }
 
-    const candidates = buildAudioCandidates(song);
+    const candidates = buildAudioCandidates(song, 'playback');
     if (candidates.length === 0) {
       this.playing = false;
       this.currentSongId = null;
@@ -606,51 +664,81 @@ class SparkAudioEngine {
     }
 
     let lastErrName = '';
-    for (let i = 0; i < candidates.length; i++) {
-      if (seq !== this.playSeq) return { ok: false, mode: 'failed' };
-      const candidateUrl = candidates[i];
-      this.destroyNativeAudio();
-      const audio = this.createFreshAudio(candidateUrl);
-      this.nativeAudio = audio;
-
-      try {
-        const playPromise = audio.play();
-        await Promise.race([
-          playPromise,
-          new Promise<never>((_, reject) =>
-            window.setTimeout(() => reject(new Error('Timeout')), 14000)
-          ),
-        ]);
-
-        if (seq !== this.playSeq) {
-          this.destroyNativeAudio();
-          return { ok: false, mode: 'failed' };
-        }
-
-        this.playing = true;
-        this.mode = 'track';
-
-        audio.onended = () => {
-          if (seq === this.playSeq) this.stop();
-        };
-        audio.onerror = () => {
-          if (seq !== this.playSeq || !this.playing) return;
-          const nextUrl = candidates[i + 1];
-          if (nextUrl) {
-            this.destroyNativeAudio();
-            const fallbackAudio = this.createFreshAudio(nextUrl);
-            this.nativeAudio = fallbackAudio;
-            void fallbackAudio.play().catch(() => this.stop());
-          } else {
-            this.stop();
-          }
-        };
-
-        this.emit();
-        return { ok: true, mode: 'track' };
-      } catch (err) {
-        lastErrName = err instanceof Error ? err.name || err.message : 'PlayError';
+    const attemptPlayUrls = async (urls: string[]): Promise<boolean> => {
+      for (let i = 0; i < urls.length; i++) {
+        if (seq !== this.playSeq) return false;
+        const candidateUrl = urls[i];
         this.destroyNativeAudio();
+        const audio = this.createFreshAudio(candidateUrl);
+        this.nativeAudio = audio;
+
+        try {
+          const playPromise = audio.play();
+          await Promise.race([
+            playPromise,
+            new Promise<never>((_, reject) =>
+              window.setTimeout(() => reject(new Error('Timeout')), 14000)
+            ),
+          ]);
+
+          if (seq !== this.playSeq) {
+            this.destroyNativeAudio();
+            return false;
+          }
+
+          this.playing = true;
+          this.mode = 'track';
+
+          audio.onended = () => {
+            if (seq === this.playSeq) this.stop();
+          };
+          audio.onerror = () => {
+            if (seq !== this.playSeq || !this.playing) return;
+            const nextUrl = urls[i + 1];
+            if (nextUrl) {
+              this.destroyNativeAudio();
+              const fallbackAudio = this.createFreshAudio(nextUrl);
+              this.nativeAudio = fallbackAudio;
+              void fallbackAudio.play().catch(() => this.stop());
+            } else {
+              this.stop();
+            }
+          };
+
+          this.emit();
+          return true;
+        } catch (err) {
+          lastErrName = err instanceof Error ? err.name || err.message : 'PlayError';
+          this.destroyNativeAudio();
+        }
+      }
+      return false;
+    };
+
+    if (await attemptPlayUrls(candidates)) {
+      return { ok: true, mode: 'track' };
+    }
+
+    // Fallback: client-side iTunes JSONP lookup from user's own residential/mobile IP
+    if (seq === this.playSeq && song.title && !song.id.startsWith('curated-')) {
+      const rescuedUrl = await resolvePreviewUrlViaJsonp(song.title, song.artist || '');
+      if (seq !== this.playSeq) return { ok: false, mode: 'failed' };
+      if (rescuedUrl) {
+        song.previewUrl = rescuedUrl;
+        const rescuedCandidates = buildAudioCandidates(song, 'playback');
+        if (await attemptPlayUrls(rescuedCandidates)) {
+          return { ok: true, mode: 'track' };
+        }
+        if (lastErrName === 'NotAllowedError') {
+          this.playing = false;
+          this.currentSongId = null;
+          this.emit();
+          return {
+            ok: false,
+            mode: 'failed',
+            message: `已为《${song.title}》匹配到正版试听流，请再轻点一次 ▶ 即可播放`,
+          };
+        }
       }
     }
 
@@ -660,7 +748,7 @@ class SparkAudioEngine {
     return {
       ok: false,
       mode: 'failed',
-      message: `《${song.title}》试听流加载失败（${lastErrName || '网络波动'}），请重试或点击下方去外部平台听完整版`,
+      message: `《${song.title}》试听流加载失败（${lastErrName || '暂未收录30s试听'}），请重试或去外部平台听完整版`,
     };
   }
 

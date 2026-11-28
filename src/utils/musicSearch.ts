@@ -5,6 +5,7 @@ import {
   canonicalTrackKey,
   expandMusicQuery,
   hasCjk,
+  isStrictTrackMatch,
   localizeTrackDisplay,
   toTraditionalChinese,
   type ExternalMusicLinks,
@@ -153,7 +154,8 @@ function fetchItunesJsonp(
   term: string,
   country: 'TW' | 'HK' | 'SG' | 'CN' | 'US',
   limit = 22,
-  offset = 0
+  offset = 0,
+  attribute?: 'songTerm'
 ): Promise<Song[]> {
   if (typeof window === 'undefined' || typeof document === 'undefined' || !term.trim()) {
     return Promise.resolve([]);
@@ -216,17 +218,18 @@ function fetchItunesJsonp(
       finish(mapped);
     };
 
+    const attrParam = attribute ? `&attribute=${attribute}` : '';
     script.async = true;
     script.src = `https://itunes.apple.com/search?term=${encodeURIComponent(
       term
-    )}&media=music&entity=song&limit=${limit}&offset=${offset}&country=${country}&lang=${lang}&callback=${cbName}`;
+    )}&media=music&entity=song${attrParam}&limit=${limit}&offset=${offset}&country=${country}&lang=${lang}&callback=${cbName}`;
     script.onerror = () => finish([]);
     document.head.appendChild(script);
   });
 }
 
 function scoreSongRelevance(song: Song, queryTerms: string[]): number {
-  let score = song.previewUrl ? 40 : 0;
+  let score = song.previewUrl ? 110 : 0;
   if (!queryTerms.length) return score;
 
   const queryHasCjk = queryTerms.some((q) => hasCjk(q));
@@ -539,6 +542,51 @@ export async function searchUniversalMusic(
     hasMore: false,
     mode: 'local-only',
   };
+}
+
+const resolvedPreviewCache = new Map<string, string | null>();
+
+/**
+ * Browser-side on-demand preview resolver using the user's own IP via iTunes JSONP.
+ * Rescues NetEase/QQ tracks (and edge-throttled tracks like 爱从零开始 / 孤勇者) on mobile!
+ */
+export async function resolvePreviewUrlViaJsonp(
+  title: string,
+  artist: string
+): Promise<string | null> {
+  if (typeof window === 'undefined' || typeof document === 'undefined' || !title.trim()) {
+    return null;
+  }
+  const cacheKey = `${title.trim().toLowerCase()}::${artist.trim().toLowerCase()}`;
+  if (resolvedPreviewCache.has(cacheKey)) {
+    return resolvedPreviewCache.get(cacheKey) ?? null;
+  }
+
+  const cleanTitle = title.replace(/\(.*?\)|（.*?）|\[.*?\]|【.*?】/g, '').trim() || title.trim();
+  const titleExpanded = expandMusicQuery(cleanTitle);
+  const fullExpanded = expandMusicQuery(`${artist} ${cleanTitle}`.trim());
+  const target = { title, artist };
+
+  const batches = await Promise.all([
+    fetchItunesJsonp(titleExpanded.traditional, fullExpanded.isCjk ? 'TW' : 'US', 16, 0, 'songTerm'),
+    fullExpanded.isCjk
+      ? fetchItunesJsonp(titleExpanded.traditional, 'HK', 12, 0, 'songTerm')
+      : Promise.resolve([]),
+    fullExpanded.isCjk
+      ? fetchItunesJsonp(titleExpanded.primary, 'CN', 12, 0, 'songTerm')
+      : Promise.resolve([]),
+    fetchItunesJsonp(fullExpanded.traditional, fullExpanded.isCjk ? 'TW' : 'US', 12, 0),
+  ]);
+
+  const all = batches.flat();
+  const strictHit = all.find(
+    (cand) =>
+      Boolean(cand.previewUrl) &&
+      isStrictTrackMatch({ title: cand.title, artist: cand.artist }, target)
+  );
+  const resolved = strictHit?.previewUrl || null;
+  resolvedPreviewCache.set(cacheKey, resolved);
+  return resolved;
 }
 
 export async function fetchSongLyrics(

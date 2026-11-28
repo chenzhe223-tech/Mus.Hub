@@ -314,6 +314,11 @@ const CHINESE_SONG_EN_TO_ZH: Record<string, string> = {
   // 孙燕姿 Stefanie Sun
   againstthelight: '逆光',
   niguang: '逆光',
+  lovefromscratch: '爱从零开始',
+  aiconlingkaishi: '爱从零开始',
+  warriorofthedarkness: '孤勇者',
+  lonewarrior: '孤勇者',
+  guyongzhe: '孤勇者',
   cloudyday: '天黑黑',
   darkness: '天黑黑',
   tianheihei: '天黑黑',

@@ -18,7 +18,7 @@ interface CloudflareCacheStorage {
 
 const CACHEABLE_API_PATHS = new Set(['/api/search', '/api/discover', '/api/lyrics']);
 // Bump cache version whenever API response schema / preview routing / localization changes
-const EDGE_CACHE_VERSION = 'v5';
+const EDGE_CACHE_VERSION = 'v6';
 
 export default {
   async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {

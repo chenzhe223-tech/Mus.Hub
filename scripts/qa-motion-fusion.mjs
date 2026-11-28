@@ -160,3 +160,25 @@ for (const file of allSrcFiles) {
   assert.ok(!txt.includes('DepthAnything'), `Forbidden local vision weight reference in ${file}`);
 }
 console.log(`[QA-Motion] Compliance & zero-external-model audit passed (${allSrcFiles.length} source files).`);
+
+// 6. Verify mobile search preview rescue & mobile audio recording / export protections
+const workerSrc = fs.readFileSync(path.join(ROOT, 'worker/index.ts'), 'utf8');
+assert.ok(workerSrc.includes("EDGE_CACHE_VERSION = 'v6'"), 'worker EDGE_CACHE_VERSION must be bumped to v6');
+
+const musicApiSrc = fs.readFileSync(path.join(ROOT, 'shared/musicApi.ts'), 'utf8');
+assert.ok(musicApiSrc.includes('audio/x-m4p'), 'musicApi must normalize audio/x-m4p to audio/mp4 for mobile playback');
+
+const musicSearchSrc = fs.readFileSync(path.join(ROOT, 'src/utils/musicSearch.ts'), 'utf8');
+assert.ok(musicSearchSrc.includes('resolvePreviewUrlViaJsonp'), 'musicSearch must expose client-side resolvePreviewUrlViaJsonp');
+
+const audioEngineSrc = fs.readFileSync(path.join(ROOT, 'src/utils/audioEngine.ts'), 'utf8');
+assert.ok(audioEngineSrc.includes('unlockFromUserGesture'), 'audioEngine must provide synchronous unlockFromUserGesture for mobile iOS/Android');
+assert.ok(audioEngineSrc.includes('resolvePreviewUrlViaJsonp'), 'audioEngine must fall back to resolvePreviewUrlViaJsonp when cached previewUrl fails');
+
+const studioViewSrc = fs.readFileSync(path.join(ROOT, 'src/components/StudioView.tsx'), 'utf8');
+assert.ok(studioViewSrc.includes('audioEngine.unlockFromUserGesture()'), 'StudioView must synchronously unlock WebAudio in export click gesture');
+
+assert.ok(exporterSrc.includes('isAppleWebKit'), 'exporter must distinguish Apple WebKit vs Android/Desktop MediaRecorder codecs & timeslice');
+assert.ok(exporterSrc.includes('audioEngine.unlockFromUserGesture()'), 'exporter must unlock WebAudio before MediaRecorder audio capture');
+assert.ok(exporterSrc.includes('if (!audioBuffer)') && exporterSrc.includes('if (!audioConfig)'), 'exporter WebCodecs must never silently drop audio when AudioBuffer/AudioEncoder is unavailable');
+console.log('[QA-Motion] Mobile preview rescue & video audio export regression checks passed.');

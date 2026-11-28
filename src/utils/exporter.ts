@@ -217,28 +217,31 @@ async function tryWebCodecsDeterministicMp4(
     durationSec
   );
 
+  // Never allow WebCodecs to encode a silent MP4; fall back to MediaRecorder (which also runs JSONP preview rescue)
+  if (!audioBuffer) {
+    return null;
+  }
+
   let audioConfig: { codec: 'mp4a.40.2'; numberOfChannels: number; sampleRate: number; bitrate: number } | null =
     null;
-  if (audioBuffer) {
-    const channels = Math.min(2, audioBuffer.numberOfChannels);
-    const sampleRate = audioBuffer.sampleRate;
-    try {
-      const aSupport = await AudioEncoder.isConfigSupported({
-        codec: 'mp4a.40.2',
-        numberOfChannels: channels,
-        sampleRate,
-        bitrate: 128_000,
-      });
-      if (aSupport.supported) {
-        audioConfig = { codec: 'mp4a.40.2', numberOfChannels: channels, sampleRate, bitrate: 128_000 };
-      }
-    } catch {
-      audioConfig = null;
+  const channels = Math.min(2, audioBuffer.numberOfChannels);
+  const sampleRate = audioBuffer.sampleRate;
+  try {
+    const aSupport = await AudioEncoder.isConfigSupported({
+      codec: 'mp4a.40.2',
+      numberOfChannels: channels,
+      sampleRate,
+      bitrate: 128_000,
+    });
+    if (aSupport.supported) {
+      audioConfig = { codec: 'mp4a.40.2', numberOfChannels: channels, sampleRate, bitrate: 128_000 };
     }
-    // If real track audio exists but browser lacks AAC AudioEncoder, let MediaRecorder handle real audio
-    if (!audioConfig && hasRealTrackAudio) {
-      return null;
-    }
+  } catch {
+    audioConfig = null;
+  }
+  // If browser lacks AAC AudioEncoder (e.g. Android Chrome), let MediaRecorder handle real audio cleanly
+  if (!audioConfig) {
+    return null;
   }
 
   const offCanvas = document.createElement('canvas');
@@ -475,6 +478,8 @@ export async function recordDynamicVideoWithAudio(
     throw new Error('当前手机浏览器暂不支持录制动态视频，请点击「导出 PNG」保存高清静态海报。');
   }
 
+  audioEngine.unlockFromUserGesture();
+
   let videoStream: MediaStream;
   try {
     videoStream = canvas.captureStream(30);
@@ -495,14 +500,27 @@ export async function recordDynamicVideoWithAudio(
     });
   }
 
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+  const isAppleWebKit =
+    /iPhone|iPad|iPod/i.test(ua) ||
+    (/Macintosh/i.test(ua) && /Safari/i.test(ua) && !/Chrome|CriOS|Android|Edg/i.test(ua));
+
   const mimeCandidates = hasAudio
-    ? [
-        'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
-        'video/mp4',
-        'video/webm;codecs=vp9,opus',
-        'video/webm;codecs=vp8,opus',
-        'video/webm',
-      ]
+    ? isAppleWebKit
+      ? [
+          'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+          'video/mp4',
+          'video/webm;codecs=vp8,opus',
+          'video/webm',
+        ]
+      : [
+          'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+          'video/mp4;codecs=avc1.42E01E,opus',
+          'video/webm;codecs=vp9,opus',
+          'video/webm;codecs=vp8,opus',
+          'video/webm',
+          'video/mp4',
+        ]
     : [
         'video/mp4;codecs=avc1.42E01E',
         'video/webm;codecs=vp9',
@@ -557,7 +575,11 @@ export async function recordDynamicVideoWithAudio(
       resolve({ blobUrl, mimeType, ext, hasAudio, encoderMode: 'mediarecorder' });
     };
 
-    recorder.start(200);
+    if (isAppleWebKit) {
+      recorder.start();
+    } else {
+      recorder.start(200);
+    }
     const recStart = performance.now();
     const timer = window.setInterval(() => {
       const pct = Math.min(100, Math.round(((performance.now() - recStart) / durationMs) * 100));

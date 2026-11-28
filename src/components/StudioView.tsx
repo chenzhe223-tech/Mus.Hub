@@ -52,6 +52,7 @@ import { TimelineInspectorBar } from './TimelineInspectorBar';
 import { PromoPlannerPanel } from './PromoPlannerPanel';
 import { generateSmartPromoPlan } from '../utils/promoPlanner';
 import { withAlpha } from '../utils/color';
+import { audioEngine } from '../utils/audioEngine';
 import {
   exportPosterPng,
   exportStudioProjectBundle,
@@ -479,6 +480,8 @@ export const StudioView: React.FC<StudioViewProps> = ({
 
   const handleRecordVideo = async () => {
     if (isRecording || !canvasRef.current) return;
+    // CRITICAL for iOS Safari / WeChat: unlock AudioContext synchronously inside tap gesture before any await!
+    audioEngine.unlockFromUserGesture();
     if (config.mode !== 'dynamic') {
       onUpdateConfig({ mode: 'dynamic' });
     }
